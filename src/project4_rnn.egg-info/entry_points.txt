@@ -1,2 +1,0 @@
-[console_scripts]
-project4-rnn = project4_rnn.cli:main
