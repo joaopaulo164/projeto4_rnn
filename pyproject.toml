@@ -87,6 +87,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+filterwarnings = [
+    "ignore::matplotlib.MatplotlibDeprecationWarning",
+    "ignore::DeprecationWarning:seaborn.*",
+]
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
