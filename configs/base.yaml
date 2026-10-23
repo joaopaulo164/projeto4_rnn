@@ -1,0 +1,51 @@
+# Base configuration for ECG5000 Binary Classification Study
+project_name: "project4_rnn"
+version: "1.0.0"
+
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  dataset_name: "ECG5000"
+  expected_sequence_length: 140
+  expected_features: 1
+  expected_dev_samples: 500
+  expected_test_samples: 4500
+  split_seed: 42
+  train_samples: 400
+  val_samples: 100
+  stratified: true
+  binary_mapping:
+    negative_class: [1]
+    positive_class: [2, 3, 4, 5]
+  normalization:
+    enabled: false
+    type: "zscore"
+
+training:
+  loss: "CrossEntropyLoss"
+  optimizer: "Adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  batch_size: 32
+  max_epochs: 150
+  patience: 15
+  min_delta: 0.0001
+  gradient_clipping: true
+  max_grad_norm: 1.0
+  use_class_weights: false
+  checkpoint_metric: "val_loss"
+  checkpoint_mode: "min"
+  train_seeds: [7, 21, 42, 84, 168]
+
+selection:
+  parsimony_threshold: 0.005
+  primary_metric: "val_balanced_accuracy"
+  first_tie_breaker: "val_f1"
+  second_tie_breaker: "val_balanced_accuracy_std" # lower is better
+  third_tie_breaker: "mean_training_time" # lower is better
+  final_tie_breaker: "parameter_count" # lower is better
+
+system:
+  device: "auto"
+  num_workers: 0
+  artifacts_dir: "artifacts"

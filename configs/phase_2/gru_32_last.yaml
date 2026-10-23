@@ -1,0 +1,14 @@
+# Experiment E02: GRU-32 with Last State Pooling
+experiment_id: "E02_GRU_32_LAST"
+phase: 2
+model:
+  architecture: "gru"
+  input_size: 1
+  hidden_size: 32
+  num_layers: 1
+  bidirectional: false
+  batch_first: true
+  pooling: "last"
+  num_classes: 2
+  expected_parameters: 3426
+description: "GRU-32 with last time-step hidden state"

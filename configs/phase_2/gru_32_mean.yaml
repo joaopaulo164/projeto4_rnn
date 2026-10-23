@@ -1,0 +1,14 @@
+# Experiment E03: GRU-32 with Mean Pooling
+experiment_id: "E03_GRU_32_MEAN"
+phase: 2
+model:
+  architecture: "gru"
+  input_size: 1
+  hidden_size: 32
+  num_layers: 1
+  bidirectional: false
+  batch_first: true
+  pooling: "mean"
+  num_classes: 2
+  expected_parameters: 3426
+description: "GRU-32 with mean temporal pooling"

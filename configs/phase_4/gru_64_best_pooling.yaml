@@ -1,0 +1,16 @@
+# Experiment E07: GRU-64 with Best Selected Pooling
+experiment_id: "E07_GRU_64_BEST_POOLING"
+phase: 4
+model:
+  architecture: "gru"
+  input_size: 1
+  hidden_size: 64
+  num_layers: 1
+  bidirectional: false
+  batch_first: true
+  pooling: "best_pooling"
+  num_classes: 2
+  expected_parameters:
+    simple_pooling: 12994
+    mean_max_pooling: 13122
+description: "GRU-64 (increased capacity) with winning pooling strategy from Phase 2"

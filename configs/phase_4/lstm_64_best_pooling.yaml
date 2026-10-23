@@ -1,0 +1,16 @@
+# Experiment E08: LSTM-64 with Best Selected Pooling
+experiment_id: "E08_LSTM_64_BEST_POOLING"
+phase: 4
+model:
+  architecture: "lstm"
+  input_size: 1
+  hidden_size: 64
+  num_layers: 1
+  bidirectional: false
+  batch_first: true
+  pooling: "best_pooling"
+  num_classes: 2
+  expected_parameters:
+    simple_pooling: 17282
+    mean_max_pooling: 17410
+description: "LSTM-64 (increased capacity) with winning pooling strategy from Phase 2"

@@ -1,0 +1,16 @@
+# Experiment E06: LSTM-32 with Best Selected Pooling
+experiment_id: "E06_LSTM_32_BEST_POOLING"
+phase: 3
+model:
+  architecture: "lstm"
+  input_size: 1
+  hidden_size: 32
+  num_layers: 1
+  bidirectional: false
+  batch_first: true
+  pooling: "best_pooling"
+  num_classes: 2
+  expected_parameters:
+    simple_pooling: 4546
+    mean_max_pooling: 4610
+description: "LSTM-32 with the winning pooling strategy from Phase 2"

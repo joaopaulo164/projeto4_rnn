@@ -1,0 +1,10 @@
+# Experiment E01: MLP Baseline
+experiment_id: "E01_MLP_32"
+phase: 1
+model:
+  architecture: "mlp"
+  input_size: 140
+  hidden_size: 32
+  num_classes: 2
+  expected_parameters: 4578
+description: "MLP Baseline with 140 -> 32 (ReLU) -> 2 logits"
