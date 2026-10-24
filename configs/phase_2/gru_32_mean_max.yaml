@@ -9,6 +9,6 @@ model:
   bidirectional: false
   batch_first: true
   pooling: "mean_max"
-  num_classes: 2
-  expected_parameters: 3490
+  num_classes: 7
+  expected_parameters: 3815
 description: "GRU-32 with concatenated mean and max temporal pooling"

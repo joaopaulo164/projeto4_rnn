@@ -1,4 +1,4 @@
-"""Consolidation of experimental results, comparisons, and scientific evidence catalog."""
+"""Consolidation of experimental results, comparisons, and scientific evidence catalog for ElectricDevices."""
 
 import json
 import logging
@@ -127,12 +127,14 @@ def consolidate_experiments(
 
     # 3. Specialized Comparison Tables
 
-    # Validation Ranking
-    if not summary_df.empty and "val_balanced_accuracy_mean" in summary_df.columns:
+    # Validation Ranking (Ordered by Macro F1, then Balanced Accuracy)
+    if not summary_df.empty:
         ranking_cols = [
             "experiment_id",
             "phase",
             "total_parameters",
+            "val_macro_f1_mean",
+            "val_macro_f1_std",
             "val_balanced_accuracy_mean",
             "val_balanced_accuracy_std",
             "val_f1_mean",
@@ -142,10 +144,19 @@ def consolidate_experiments(
             "total_training_time_sec_mean",
         ]
         available_ranking_cols = [c for c in ranking_cols if c in summary_df.columns]
-        ranking_df = summary_df[available_ranking_cols].sort_values(
-            by=["val_balanced_accuracy_mean", "val_f1_mean"], ascending=[False, False]
-        )
-        ranking_df.to_csv(summary_dir / "validation_ranking.csv", index=False)
+        sort_by = []
+        if "val_macro_f1_mean" in summary_df.columns:
+            sort_by.append("val_macro_f1_mean")
+        elif "val_f1_mean" in summary_df.columns:
+            sort_by.append("val_f1_mean")
+        if "val_balanced_accuracy_mean" in summary_df.columns:
+            sort_by.append("val_balanced_accuracy_mean")
+
+        if sort_by:
+            ranking_df = summary_df[available_ranking_cols].sort_values(
+                by=sort_by, ascending=[False] * len(sort_by)
+            )
+            ranking_df.to_csv(summary_dir / "validation_ranking.csv", index=False)
 
     # Pooling Ablation (Phase 2: E02, E03, E04, E05)
     phase2_df = summary_df[summary_df["phase"] == 2] if not summary_df.empty else pd.DataFrame()
@@ -176,7 +187,7 @@ def consolidate_experiments(
     _generate_comparison_subtables(summary_df, summary_dir)
 
     # 4. Generate Summary Plots
-    if not metrics_by_seed_df.empty and "val_balanced_accuracy" in metrics_by_seed_df.columns:
+    if not metrics_by_seed_df.empty:
         plot_seed_stability(metrics_by_seed_df, figures_dir / "seed_stability_boxplot.png")
 
     if not summary_df.empty:
@@ -196,8 +207,6 @@ def _generate_comparison_subtables(summary_df: pd.DataFrame, summary_dir: Path) 
     """Generate focused scientific comparison CSV tables."""
     if summary_df.empty:
         return
-
-    {row["experiment_id"]: row for _, row in summary_df.iterrows()}
 
     # Cell Comparison 32: GRU-32 vs LSTM-32
     cell_32_exps = [e for e in summary_df["experiment_id"] if "GRU_32" in e or "LSTM_32" in e]
@@ -233,9 +242,9 @@ def generate_evidence_catalog(summary_dir: Path, summary_df: pd.DataFrame) -> No
     catalog_path = summary_dir / "article_evidence_catalog.md"
 
     lines = [
-        "# Catálogo de Evidências Experimentais - Projeto 4 (ECG5000 RNN)",
+        "# Catálogo de Evidências Experimentais - Projeto 4 (ElectricDevices Multiclasse)",
         "",
-        "Este catálogo consolida todos os artefatos, tabelas e figuras geradas no estudo científico de classificação binária de séries temporais com RNN.",
+        "Este catálogo consolida todos os artefatos, tabelas e figuras geradas no estudo científico de classificação multiclasse (7 classes) de séries temporais com RNN no dataset ElectricDevices.",
         "",
         "## 1. Perguntas de Pesquisa e Evidências Associadas",
         "",
@@ -252,7 +261,7 @@ def generate_evidence_catalog(summary_dir: Path, summary_df: pd.DataFrame) -> No
         "",
         "- [`experiments_summary.csv`](experiments_summary.csv): Métricas completas consolidadas de todas as configurações.",
         "- [`metrics_by_seed.csv`](metrics_by_seed.csv): Métricas individuais por semente (5 sementes por configuração = 40 execuções).",
-        "- [`validation_ranking.csv`](validation_ranking.csv): Ranking das configurações ordenado por Balanced Accuracy na validação.",
+        "- [`validation_ranking.csv`](validation_ranking.csv): Ranking das configurações ordenado por Macro F1 na validação.",
         "- [`pooling_ablation.csv`](pooling_ablation.csv): Resultados da ablação de pooling da Fase 2 (E02 a E05).",
         "- [`pooling_selection.json`](pooling_selection.json): Justificativa formal e pooling vencedor selecionado.",
         "- [`cell_comparison_32.csv`](cell_comparison_32.csv): Comparação entre GRU e LSTM com 32 unidades.",
@@ -262,16 +271,19 @@ def generate_evidence_catalog(summary_dir: Path, summary_df: pd.DataFrame) -> No
         "- [`parameter_comparison.csv`](parameter_comparison.csv): Contagem de parâmetros teóricos e reais.",
         "- [`execution_time_comparison.csv`](execution_time_comparison.csv): Tempos médios de treinamento e inferência.",
         "- [`final_model_selection.json`](final_model_selection.json): Seleção do modelo campeão para avaliação no teste.",
-        "- [`final_test_metrics.json`](final_test_metrics.json): Métricas obtidas no conjunto oficial de teste (4.500 amostras).",
+        "- [`final_test_metrics.json`](final_test_metrics.json): Métricas obtidas no conjunto oficial de teste (7.711 amostras).",
+        "- [`final_test_metrics_by_class.csv`](final_test_metrics_by_class.csv): Métricas por classe no conjunto oficial de teste.",
         "",
         "## 3. Figuras Científicas de Alta Resolução",
         "",
+        "- `figures/class_distribution.png`: Distribuição das 7 classes nas partições de treino, validação e teste.",
+        "- `figures/time_series_samples.png`: Exemplos de séries temporais (comprimento 96) para cada uma das 7 classes.",
         "- `figures/phase2_pooling_ablation.png`: Gráfico de barras da ablação de pooling com desvio-padrão.",
-        "- `figures/seed_stability_boxplot.png`: Distribuição da balanced accuracy entre as 5 sementes.",
-        "- `figures/accuracy_vs_parameters.png`: Dispersão de acurácia balanceada vs número de parâmetros.",
+        "- `figures/seed_stability_boxplot.png`: Distribuição do Macro F1 entre as 5 sementes.",
+        "- `figures/accuracy_vs_parameters.png` / `figures/f1_vs_parameters.png`: Dispersão de Macro F1 vs número de parâmetros.",
         "- `figures/performance_vs_time.png`: Relação entre desempenho e tempo computacional.",
-        "- `figures/final_test_confusion_matrix.png`: Matriz de confusão no conjunto de teste oficial.",
-        "- `figures/final_test_roc_pr_curves.png`: Curvas ROC e Precision-Recall do modelo final no teste.",
+        "- `figures/final_test_confusion_matrix_raw.png`: Matriz de confusão bruta no conjunto de teste oficial.",
+        "- `figures/final_test_confusion_matrix_normalized.png`: Matriz de confusão normalizada no conjunto de teste oficial.",
         "",
     ]
 

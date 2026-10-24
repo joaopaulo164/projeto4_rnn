@@ -9,8 +9,8 @@ model:
   bidirectional: false
   batch_first: true
   pooling: "best_pooling"
-  num_classes: 2
+  num_classes: 7
   expected_parameters:
-    simple_pooling: 17282
-    mean_max_pooling: 17410
+    simple_pooling: 17607
+    mean_max_pooling: 18055
 description: "LSTM-64 (increased capacity) with winning pooling strategy from Phase 2"

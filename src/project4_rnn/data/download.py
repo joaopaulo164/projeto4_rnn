@@ -1,4 +1,4 @@
-"""Dataset acquisition, local verification, and provenance tracking for ECG5000."""
+"""Dataset acquisition, local verification, and provenance tracking for ElectricDevices."""
 
 import json
 import logging
@@ -8,13 +8,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from project4_rnn.constants import (
+    DATASET_NAME,
+    DATASET_SOURCE,
+    TEST_FILE_NAME,
+    TRAIN_FILE_NAME,
+)
 from project4_rnn.reproducibility import compute_file_hash
 
 logger = logging.getLogger("project4_rnn.data.download")
 
-# Standard UCR / TimeSeriesClassification dataset URLs
-PRIMARY_URL = "https://www.timeseriesclassification.com/aeon-toolkit/ECG5000.zip"
-MIRROR_URL = "https://raw.githubusercontent.com/hfawaz/cd-diagram/master/UnivData/ECG5000"
+# Standard UCR / TimeSeriesClassification / sktime dataset URLs
+PRIMARY_URL = "https://www.timeseriesclassification.com/aeon-toolkit/ElectricDevices.zip"
+FALLBACK_URL = "https://www.timeseriesclassification.com/Downloads/ElectricDevices.zip"
+MIRROR_SKTIME_TRAIN = "https://raw.githubusercontent.com/sktime/sktime/main/sktime/datasets/data/ElectricDevices/ElectricDevices_TRAIN.ts"
+MIRROR_SKTIME_TEST = "https://raw.githubusercontent.com/sktime/sktime/main/sktime/datasets/data/ElectricDevices/ElectricDevices_TEST.ts"
+MIRROR_HFAWAZ_TRAIN = "https://raw.githubusercontent.com/hfawaz/cd-diagram/master/UnivData/ElectricDevices/ElectricDevices_TRAIN.txt"
+MIRROR_HFAWAZ_TEST = "https://raw.githubusercontent.com/hfawaz/cd-diagram/master/UnivData/ElectricDevices/ElectricDevices_TEST.txt"
 
 
 def download_file(url: str, dest_path: Path, timeout: int = 30) -> None:
@@ -37,12 +47,12 @@ def download_file(url: str, dest_path: Path, timeout: int = 30) -> None:
         out_file.write(response.read())
 
 
-def download_ecg5000(
+def download_electricdevices(
     raw_dir: Path,
     force_download: bool = False,
     timeout: int = 30,
 ) -> dict[str, Any]:
-    """Download and extract the ECG5000 dataset into raw_dir if not already present.
+    """Download and extract the ElectricDevices dataset into raw_dir if not already present.
 
     Args:
         raw_dir: Directory where raw dataset files are stored.
@@ -55,53 +65,63 @@ def download_ecg5000(
     raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_dir / "raw_manifest.json"
-
-    # Check for expected txt or arff files
-    train_txt = raw_dir / "ECG5000_TRAIN.txt"
-    test_txt = raw_dir / "ECG5000_TEST.txt"
-    train_arff = raw_dir / "ECG5000_TRAIN.arff"
-    test_arff = raw_dir / "ECG5000_TEST.arff"
-    train_ts = raw_dir / "ECG5000_TRAIN.ts"
-    test_ts = raw_dir / "ECG5000_TEST.ts"
+    train_ts = raw_dir / TRAIN_FILE_NAME
+    test_ts = raw_dir / TEST_FILE_NAME
+    train_txt = raw_dir / "ElectricDevices_TRAIN.txt"
+    test_txt = raw_dir / "ElectricDevices_TEST.txt"
+    train_arff = raw_dir / "ElectricDevices_TRAIN.arff"
+    test_arff = raw_dir / "ElectricDevices_TEST.arff"
 
     files_exist = (
-        (train_txt.is_file() and test_txt.is_file())
+        (train_ts.is_file() and test_ts.is_file())
+        or (train_txt.is_file() and test_txt.is_file())
         or (train_arff.is_file() and test_arff.is_file())
-        or (train_ts.is_file() and test_ts.is_file())
     )
 
     if files_exist and not force_download:
-        logger.info(f"Raw ECG5000 files found locally in {raw_dir}.")
+        logger.info(f"Raw ElectricDevices files found locally in {raw_dir}.")
         return update_raw_manifest(raw_dir, source="local_disk")
 
-    zip_path = raw_dir / "ECG5000.zip"
+    zip_path = raw_dir / "ElectricDevices.zip"
     source_used: str | None = None
 
-    # Try downloading zip from primary URL
-    try:
-        logger.info(f"Downloading ECG5000 from primary source: {PRIMARY_URL}")
-        download_file(PRIMARY_URL, zip_path, timeout=timeout)
-        source_used = PRIMARY_URL
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(raw_dir)
-        logger.info(f"Extracted ECG5000 archive to {raw_dir}")
-    except Exception as primary_err:
-        logger.warning(f"Primary download failed ({primary_err}). Trying mirror sources...")
+    # Strategy 1: Try downloading zip from primary URL
+    for candidate_zip_url in (PRIMARY_URL, FALLBACK_URL):
         try:
-            # Try fetching individual text files from mirror
-            train_url = f"{MIRROR_URL}/ECG5000_TRAIN.txt"
-            test_url = f"{MIRROR_URL}/ECG5000_TEST.txt"
-            download_file(train_url, train_txt, timeout=timeout)
-            download_file(test_url, test_txt, timeout=timeout)
-            source_used = MIRROR_URL
-            logger.info(f"Downloaded raw TXT files from mirror: {MIRROR_URL}")
+            logger.info(f"Attempting download of ElectricDevices from: {candidate_zip_url}")
+            download_file(candidate_zip_url, zip_path, timeout=timeout)
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(raw_dir)
+            source_used = candidate_zip_url
+            logger.info(f"Extracted ElectricDevices archive to {raw_dir}")
+            break
+        except Exception as zip_err:
+            logger.warning(f"Download from {candidate_zip_url} failed: {zip_err}")
+
+    # Strategy 2: Download .ts files from sktime mirror
+    if source_used is None and not files_exist:
+        try:
+            logger.info("Attempting download from sktime mirror...")
+            download_file(MIRROR_SKTIME_TRAIN, train_ts, timeout=timeout)
+            download_file(MIRROR_SKTIME_TEST, test_ts, timeout=timeout)
+            source_used = "sktime_github_mirror"
+            logger.info(f"Downloaded .ts files from sktime mirror into {raw_dir}")
+        except Exception as sktime_err:
+            logger.warning(f"Sktime mirror download failed: {sktime_err}")
+
+    # Strategy 3: Download .txt files from UnivData mirror
+    if source_used is None and not files_exist:
+        try:
+            logger.info("Attempting download from UnivData mirror...")
+            download_file(MIRROR_HFAWAZ_TRAIN, train_txt, timeout=timeout)
+            download_file(MIRROR_HFAWAZ_TEST, test_txt, timeout=timeout)
+            source_used = "univdata_mirror"
+            logger.info(f"Downloaded raw TXT files from UnivData mirror into {raw_dir}")
         except Exception as mirror_err:
             if not files_exist:
                 raise RuntimeError(
-                    f"Failed to acquire ECG5000 dataset automatically. "
-                    f"Primary error: {primary_err}. Mirror error: {mirror_err}. "
-                    f"Please place ECG5000_TRAIN.txt and ECG5000_TEST.txt (or .arff) in {raw_dir}."
+                    f"Failed to acquire ElectricDevices dataset automatically. "
+                    f"Please place {TRAIN_FILE_NAME} and {TEST_FILE_NAME} (or .txt/.arff) in {raw_dir}."
                 ) from mirror_err
 
     return update_raw_manifest(raw_dir, source=source_used or "local_disk")
@@ -128,12 +148,14 @@ def update_raw_manifest(raw_dir: Path, source: str) -> dict[str, Any]:
         ):
             files_info[fpath.name] = {
                 "size_bytes": fpath.stat().st_size,
+                "md5": compute_file_hash(fpath, "md5"),
                 "sha256": compute_file_hash(fpath, "sha256"),
             }
 
     manifest = {
-        "dataset_name": "ECG5000",
+        "dataset_name": DATASET_NAME,
         "source": source,
+        "archive_provenance": DATASET_SOURCE,
         "acquisition_timestamp": datetime.now(UTC).isoformat(),
         "files": files_info,
     }

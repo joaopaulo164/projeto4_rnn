@@ -9,6 +9,6 @@ model:
   bidirectional: false
   batch_first: true
   pooling: "max"
-  num_classes: 2
-  expected_parameters: 3426
+  num_classes: 7
+  expected_parameters: 3591
 description: "GRU-32 with max temporal pooling"

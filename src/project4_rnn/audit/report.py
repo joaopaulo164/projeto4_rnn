@@ -63,7 +63,7 @@ def generate_audit_report(
             "",
             "## 3. Diretrizes de Rigor e Reprodutibilidade Científica",
             "",
-            "- **Isolamento de Teste**: O conjunto oficial de teste (4.500 amostras) foi reservado exclusivamente para a avaliação final do modelo campeão selecionado pelas 100 amostras de validação.",
+            "- **Isolamento de Teste**: O conjunto oficial de teste (7.711 amostras) foi reservado exclusivamente para a avaliação final do modelo campeão selecionado pela partição de validação (~1.785 amostras).",
             "- **Determinismo e Sementes**: Os 40 experimentos utilizaram sementes controladas (7, 21, 42, 84, 168) e a mesma partição estratificada de desenvolvimento (seed 42).",
             "- **Parâmetros das Redes**: As contagens de parâmetros de todas as arquiteturas (MLP, GRU-32, LSTM-32, GRU-64, LSTM-64) foram validadas analítica e empiricamente.",
             "",

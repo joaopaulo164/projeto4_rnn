@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from project4_rnn.config import build_experiment_config
+from project4_rnn.data.preprocessing import map_official_to_internal_labels
 from project4_rnn.experiments.runner import check_run_status, run_single_seed
 from project4_rnn.orchestration.invalidation import (
     invalidate_experiment,
@@ -19,13 +20,12 @@ def test_reentrance_and_invalidation_flow(
 ) -> None:
     """Verify that completed runs are skipped, and selective invalidation clears status."""
     X_dev, y_dev_orig = synthetic_dev_data
-    from project4_rnn.data.preprocessing import binarize_labels
 
-    y_dev_bin = binarize_labels(y_dev_orig)
-    X_train = X_dev[:400]
-    y_train = y_dev_bin[:400]
-    X_val = X_dev[400:500]
-    y_val = y_dev_bin[400:500]
+    y_dev_mapped = map_official_to_internal_labels(y_dev_orig)
+    X_train = X_dev[:100]
+    y_train = y_dev_mapped[:100]
+    X_val = X_dev[100:140]
+    y_val = y_dev_mapped[100:140]
 
     cfg = build_experiment_config(
         base_config_path=Path("configs/base.yaml"),
@@ -42,7 +42,7 @@ def test_reentrance_and_invalidation_flow(
         y_train=y_train,
         X_val=X_val,
         y_val=y_val,
-        val_indices=np.arange(400, 500),
+        val_indices=np.arange(100, 140),
         artifacts_dir=temp_artifacts_dir,
         force=False,
     )

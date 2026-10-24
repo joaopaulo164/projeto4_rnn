@@ -107,7 +107,7 @@ def build_standard_pipeline_graph() -> DependencyGraph:
     dag.add_step(
         step_id="data_preparation",
         phase=None,
-        description="Acquire ECG5000, binarize labels, create development split (400 train, 100 val)",
+        description="Acquire ElectricDevices, map 1-7 labels to 0-6, create development split (~7141 train, ~1785 val)",
         dependencies=["environment_validation"],
         expected_outputs=[
             "data/processed/split_indices.json",
@@ -205,7 +205,7 @@ def build_standard_pipeline_graph() -> DependencyGraph:
     dag.add_step(
         step_id="final_test_evaluation",
         phase=None,
-        description="Evaluate the frozen winning model on official 4,500 test samples",
+        description="Evaluate the frozen winning model on official 7,711 test samples",
         dependencies=["final_model_selection", "data_validation"],
         expected_outputs=[
             "artifacts/summary/final_test_metrics.json",

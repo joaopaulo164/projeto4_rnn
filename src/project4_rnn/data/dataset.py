@@ -1,4 +1,4 @@
-"""PyTorch Dataset implementation and deterministic DataLoader creation."""
+"""PyTorch Dataset implementation and deterministic DataLoader creation for ElectricDevices."""
 
 import logging
 
@@ -11,8 +11,8 @@ from project4_rnn.reproducibility import seed_worker
 logger = logging.getLogger("project4_rnn.data.dataset")
 
 
-class ECG5000Dataset(Dataset):
-    """PyTorch Dataset for ECG5000 time series."""
+class ElectricDevicesDataset(Dataset):
+    """PyTorch Dataset for ElectricDevices time series."""
 
     def __init__(
         self,
@@ -20,12 +20,12 @@ class ECG5000Dataset(Dataset):
         labels: np.ndarray | torch.Tensor,
         reshape_for_rnn: bool = False,
     ) -> None:
-        """Initialize ECG5000 dataset.
+        """Initialize ElectricDevices dataset.
 
         Args:
-            features: 2D array of shape (N, 140).
-            labels: 1D array of shape (N,).
-            reshape_for_rnn: If True, reshapes features to (N, 140, 1) for RNNs.
+            features: 2D array of shape (N, 96).
+            labels: 1D array of internal index labels (N,) with values in 0..6.
+            reshape_for_rnn: If True, reshapes features to (N, 96, 1) for RNNs.
         """
         if isinstance(features, np.ndarray):
             self.features = torch.from_numpy(features).float()
@@ -38,7 +38,7 @@ class ECG5000Dataset(Dataset):
             self.labels = labels.long()
 
         if reshape_for_rnn and self.features.ndim == 2:
-            self.features = self.features.unsqueeze(-1)  # (N, 140, 1)
+            self.features = self.features.unsqueeze(-1)  # (N, 96, 1)
 
     def __len__(self) -> int:
         return self.features.shape[0]
@@ -63,22 +63,22 @@ def create_dataloaders(
     """Create deterministic PyTorch DataLoaders for train, validation, and optional test set.
 
     Args:
-        X_train: Training features (400, 140).
-        y_train: Training labels (400,).
-        X_val: Validation features (100, 140).
-        y_val: Validation labels (100,).
-        X_test: Optional test features (4500, 140).
-        y_test: Optional test labels (4500,).
+        X_train: Training features.
+        y_train: Training mapped labels (0..6).
+        X_val: Validation features.
+        y_val: Validation mapped labels (0..6).
+        X_test: Optional test features.
+        y_test: Optional test mapped labels (0..6).
         batch_size: Batch size for training and evaluation.
         seed: Seed for deterministic shuffle.
-        reshape_for_rnn: Whether to shape input as (N, 140, 1) or (N, 140).
+        reshape_for_rnn: Whether to shape input as (N, 96, 1) or (N, 96).
         num_workers: PyTorch DataLoader num_workers.
 
     Returns:
         Tuple of (train_loader, val_loader, test_loader).
     """
-    train_dataset = ECG5000Dataset(X_train, y_train, reshape_for_rnn=reshape_for_rnn)
-    val_dataset = ECG5000Dataset(X_val, y_val, reshape_for_rnn=reshape_for_rnn)
+    train_dataset = ElectricDevicesDataset(X_train, y_train, reshape_for_rnn=reshape_for_rnn)
+    val_dataset = ElectricDevicesDataset(X_val, y_val, reshape_for_rnn=reshape_for_rnn)
 
     # Deterministic generator for training shuffle
     generator = torch.Generator()
@@ -105,7 +105,7 @@ def create_dataloaders(
 
     test_loader = None
     if X_test is not None and y_test is not None:
-        test_dataset = ECG5000Dataset(X_test, y_test, reshape_for_rnn=reshape_for_rnn)
+        test_dataset = ElectricDevicesDataset(X_test, y_test, reshape_for_rnn=reshape_for_rnn)
         test_loader = DataLoader(
             test_dataset,
             batch_size=batch_size,

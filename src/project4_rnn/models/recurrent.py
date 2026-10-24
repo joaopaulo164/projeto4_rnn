@@ -1,4 +1,4 @@
-"""Recurrent neural network models (GRU and LSTM) with configurable pooling strategies."""
+"""Recurrent neural network models (GRU and LSTM) with configurable pooling strategies for ElectricDevices."""
 
 import torch
 import torch.nn as nn
@@ -10,15 +10,15 @@ from project4_rnn.models.pooling import TemporalPooling
 class RecurrentClassifier(BaseTimeSeriesModel):
     """Recurrent neural network classifier supporting GRU and LSTM with temporal pooling.
 
-    Configurations:
-        - GRU-32 (last/mean/max): 3,426 parameters
-        - GRU-32 (mean_max): 3,490 parameters
-        - LSTM-32 (last/mean/max): 4,546 parameters
-        - LSTM-32 (mean_max): 4,610 parameters
-        - GRU-64 (last/mean/max): 12,994 parameters
-        - GRU-64 (mean_max): 13,122 parameters
-        - LSTM-64 (last/mean/max): 17,282 parameters
-        - LSTM-64 (mean_max): 17,410 parameters
+    Configurations for ElectricDevices (7 classes):
+        - GRU-32 (last/mean/max): 3,591 parameters
+        - GRU-32 (mean_max): 3,815 parameters
+        - LSTM-32 (last/mean/max): 4,711 parameters
+        - LSTM-32 (mean_max): 4,935 parameters
+        - GRU-64 (last/mean/max): 13,319 parameters
+        - GRU-64 (mean_max): 13,767 parameters
+        - LSTM-64 (last/mean/max): 17,607 parameters
+        - LSTM-64 (mean_max): 18,055 parameters
     """
 
     def __init__(
@@ -30,7 +30,7 @@ class RecurrentClassifier(BaseTimeSeriesModel):
         bidirectional: bool = False,
         batch_first: bool = True,
         pooling: str = "last",
-        num_classes: int = 2,
+        num_classes: int = 7,
     ) -> None:
         """Initialize recurrent network.
 
@@ -42,7 +42,7 @@ class RecurrentClassifier(BaseTimeSeriesModel):
             bidirectional: Recurrence directionality (default False).
             batch_first: If True, input is (batch, seq, feature) (default True).
             pooling: Temporal pooling strategy ('last', 'mean', 'max', 'mean_max').
-            num_classes: Output logits dimension (default 2).
+            num_classes: Output logits dimension (default 7).
         """
         super().__init__()
         self.cell_type = cell_type.lower()
@@ -83,7 +83,7 @@ class RecurrentClassifier(BaseTimeSeriesModel):
         """Forward pass.
 
         Args:
-            x: Input tensor of shape (batch, 140, 1) or (batch, 140).
+            x: Input tensor of shape (batch, 96, 1) or (batch, 96).
 
         Returns:
             Logits of shape (batch, num_classes).

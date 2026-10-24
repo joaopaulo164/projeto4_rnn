@@ -1,4 +1,4 @@
-"""Experiment runner orchestrating individual seed training runs and artifact generation."""
+"""Experiment runner orchestrating individual seed training runs and artifact generation for ElectricDevices."""
 
 import json
 import logging
@@ -7,8 +7,13 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from project4_rnn.config import ExperimentConfig
+from project4_rnn.constants import (
+    INTERNAL_TO_OFFICIAL_LABEL,
+    OFFICIAL_TO_INTERNAL_LABEL,
+)
 from project4_rnn.data.dataset import create_dataloaders
 from project4_rnn.evaluation.plots import (
     plot_confusion_matrix,
@@ -32,15 +37,18 @@ REQUIRED_RUN_ARTIFACTS = [
     "environment.json",
     "dataset_summary.json",
     "split_summary.json",
+    "label_mapping.json",
     "model_summary.txt",
     "parameter_count.json",
     "training_history.csv",
     "validation_metrics.json",
+    "validation_metrics_by_class.csv",
     "predictions_validation.csv",
     "probabilities_validation.csv",
     "best_checkpoint.pt",
     "training_curves.png",
-    "validation_confusion_matrix.png",
+    "validation_confusion_matrix_raw.png",
+    "validation_confusion_matrix_normalized.png",
     "execution_metadata.json",
 ]
 
@@ -98,21 +106,19 @@ def run_single_seed(
     val_indices: np.ndarray,
     artifacts_dir: Path = Path("artifacts"),
     force: bool = False,
-    y_val_orig: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Execute training and evaluation for a single seed with full artifact generation.
+    """Execute training and evaluation for a single seed with full multiclass artifact generation.
 
     Args:
         config: Resolved ExperimentConfig.
         seed: Random seed.
-        X_train: Training features (400, 140).
-        y_train: Training labels (400,).
-        X_val: Validation features (100, 140).
-        y_val: Validation labels (100,).
+        X_train: Training features.
+        y_train: Training mapped labels (0..6).
+        X_val: Validation features.
+        y_val: Validation mapped labels (0..6).
         val_indices: Original indices of validation samples in development partition.
         artifacts_dir: Root directory for artifacts.
         force: If True, forces execution even if completed artifacts exist.
-        y_val_orig: Optional original multiclass labels for validation set.
 
     Returns:
         Dictionary containing run summary and metrics.
@@ -155,6 +161,7 @@ def run_single_seed(
         "train_samples": int(X_train.shape[0]),
         "val_samples": int(X_val.shape[0]),
         "sequence_length": int(X_train.shape[1]),
+        "num_classes": config.model.num_classes,
         "train_class_counts": {
             str(k): int(v) for k, v in zip(*np.unique(y_train, return_counts=True), strict=False)
         },
@@ -172,6 +179,14 @@ def run_single_seed(
     }
     with open(run_dir / "split_summary.json", "w", encoding="utf-8") as f:
         json.dump(split_summary, f, indent=2)
+
+    # Save label mapping
+    label_map_payload = {
+        "official_to_internal": OFFICIAL_TO_INTERNAL_LABEL,
+        "internal_to_official": INTERNAL_TO_OFFICIAL_LABEL,
+    }
+    with open(run_dir / "label_mapping.json", "w", encoding="utf-8") as f:
+        json.dump(label_map_payload, f, indent=2)
 
     # 5. Build model and record summary
     is_rnn = config.model.architecture in ("gru", "lstm")
@@ -214,19 +229,26 @@ def run_single_seed(
     with open(run_dir / "validation_metrics.json", "w", encoding="utf-8") as f:
         json.dump(val_metrics, f, indent=2)
 
+    # Save per-class metrics CSV
+    per_class_dict = val_metrics.get("per_class_metrics", {})
+    if per_class_dict:
+        class_df = pd.DataFrame(per_class_dict).T
+        class_df.to_csv(run_dir / "validation_metrics_by_class.csv")
+    else:
+        pd.DataFrame().to_csv(run_dir / "validation_metrics_by_class.csv")
+
     # 9. Save predictions and probabilities
     save_prediction_artifacts(
         predictions_csv_path=run_dir / "predictions_validation.csv",
         probabilities_csv_path=run_dir / "probabilities_validation.csv",
         sample_indices=val_indices,
-        y_binary=y_val,
+        y_true=y_val,
         y_pred=val_preds,
         y_prob=val_probs,
         experiment_id=config.experiment_id,
         phase=config.phase,
         seed=seed,
         checkpoint_name="best_checkpoint.pt",
-        y_original=y_val_orig,
     )
 
     # 10. Generate run plots
@@ -240,8 +262,16 @@ def run_single_seed(
     plot_confusion_matrix(
         y_true=y_val,
         y_pred=val_preds,
-        output_path=run_dir / "validation_confusion_matrix.png",
-        title=f"Val Confusion Matrix ({config.experiment_id} - Seed {seed})",
+        output_path=run_dir / "validation_confusion_matrix_raw.png",
+        title=f"Val Confusion Matrix Raw ({config.experiment_id} - Seed {seed})",
+        normalize=False,
+    )
+    plot_confusion_matrix(
+        y_true=y_val,
+        y_pred=val_preds,
+        output_path=run_dir / "validation_confusion_matrix_normalized.png",
+        title=f"Val Confusion Matrix Normalized ({config.experiment_id} - Seed {seed})",
+        normalize=True,
     )
 
     end_timestamp = datetime.now(UTC)
@@ -277,7 +307,7 @@ def run_single_seed(
 
     run_logger.info(
         f"Completed run {config.experiment_id} | Seed {seed} | "
-        f"Val BalAcc: {val_metrics['balanced_accuracy']:.4f} | Val F1: {val_metrics['f1']:.4f}"
+        f"Val MacroF1: {val_metrics['macro_f1']:.4f} | Val BalAcc: {val_metrics['balanced_accuracy']:.4f}"
     )
     return exec_metadata
 
@@ -291,20 +321,18 @@ def run_experiment_all_seeds(
     val_indices: np.ndarray,
     artifacts_dir: Path = Path("artifacts"),
     force: bool = False,
-    y_val_orig: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     """Run all 5 configured seeds for an experiment.
 
     Args:
         config: Resolved ExperimentConfig.
         X_train: Training features array.
-        y_train: Training labels array.
+        y_train: Training mapped labels array (0..6).
         X_val: Validation features array.
-        y_val: Validation labels array.
+        y_val: Validation mapped labels array (0..6).
         val_indices: Validation sample index array.
         artifacts_dir: Artifacts root directory.
         force: Force re-execution.
-        y_val_orig: Optional original multiclass validation labels.
 
     Returns:
         List of execution summary dictionaries across all seeds.
@@ -323,7 +351,6 @@ def run_experiment_all_seeds(
             val_indices=val_indices,
             artifacts_dir=artifacts_dir,
             force=force,
-            y_val_orig=y_val_orig,
         )
         summaries.append(run_sum)
 

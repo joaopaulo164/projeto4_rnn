@@ -7,32 +7,28 @@ import pytest
 
 from project4_rnn.config import ExperimentConfig, build_experiment_config
 from project4_rnn.constants import (
-    OFFICIAL_DEV_SAMPLES,
-    OFFICIAL_TEST_SAMPLES,
+    OFFICIAL_CLASSES,
     SEQUENCE_LENGTH,
 )
 
 
 @pytest.fixture
 def synthetic_dev_data() -> tuple[np.ndarray, np.ndarray]:
-    """Generate reproducible synthetic development data (500 samples, 140 length)."""
+    """Generate reproducible synthetic development data (100 samples, 96 length, 7 classes)."""
     np.random.seed(42)
-    X = np.random.randn(OFFICIAL_DEV_SAMPLES, SEQUENCE_LENGTH).astype(np.float32)
-    # Multiclass labels: class 1 (approx 290), class 2 (approx 180), classes 3-5 (approx 30)
-    y_orig = np.random.choice(
-        [1, 2, 3, 4, 5], size=OFFICIAL_DEV_SAMPLES, p=[0.58, 0.35, 0.03, 0.02, 0.02]
-    )
+    n_samples = 140
+    X = np.random.randn(n_samples, SEQUENCE_LENGTH).astype(np.float32)
+    y_orig = np.random.choice(list(OFFICIAL_CLASSES), size=n_samples)
     return X, y_orig
 
 
 @pytest.fixture
 def synthetic_test_data() -> tuple[np.ndarray, np.ndarray]:
-    """Generate reproducible synthetic test data (4500 samples, 140 length)."""
+    """Generate reproducible synthetic test data (70 samples, 96 length, 7 classes)."""
     np.random.seed(42)
-    X = np.random.randn(OFFICIAL_TEST_SAMPLES, SEQUENCE_LENGTH).astype(np.float32)
-    y_orig = np.random.choice(
-        [1, 2, 3, 4, 5], size=OFFICIAL_TEST_SAMPLES, p=[0.58, 0.35, 0.03, 0.02, 0.02]
-    )
+    n_samples = 70
+    X = np.random.randn(n_samples, SEQUENCE_LENGTH).astype(np.float32)
+    y_orig = np.random.choice(list(OFFICIAL_CLASSES), size=n_samples)
     return X, y_orig
 
 

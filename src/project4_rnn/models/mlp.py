@@ -1,4 +1,4 @@
-"""Multilayer Perceptron (MLP) baseline model for ECG5000 classification."""
+"""Multilayer Perceptron (MLP) baseline model for ElectricDevices classification."""
 
 import torch
 import torch.nn as nn
@@ -7,20 +7,20 @@ from project4_rnn.models.base import BaseTimeSeriesModel
 
 
 class MLP32(BaseTimeSeriesModel):
-    """E01 Baseline: Multi-Layer Perceptron with 140 -> 32 -> 2 architecture.
+    """E01 Baseline: Multi-Layer Perceptron with 96 -> 32 -> 7 architecture.
 
     Layers:
-        - Linear(140, 32): 140 * 32 + 32 = 4,512 parameters
+        - Linear(96, 32): 96 * 32 + 32 = 3,104 parameters
         - ReLU activation
-        - Linear(32, 2): 32 * 2 + 2 = 66 parameters
-    Total expected parameters: 4,578.
+        - Linear(32, 7): 32 * 7 + 7 = 231 parameters
+    Total expected parameters: 3,335.
     """
 
     def __init__(
         self,
-        input_size: int = 140,
+        input_size: int = 96,
         hidden_size: int = 32,
-        num_classes: int = 2,
+        num_classes: int = 7,
     ) -> None:
         super().__init__()
         self.input_size = input_size
@@ -35,12 +35,12 @@ class MLP32(BaseTimeSeriesModel):
         """Forward pass.
 
         Args:
-            x: Input tensor of shape (batch, 140) or (batch, 140, 1).
+            x: Input tensor of shape (batch, 96) or (batch, 96, 1).
 
         Returns:
-            Logits of shape (batch, num_classes).
+            Logits of shape (batch, 7).
         """
-        # If input has trailing channel dimension (batch, 140, 1), flatten to (batch, 140)
+        # If input has trailing channel dimension (batch, 96, 1), flatten to (batch, 96)
         if x.ndim == 3 and x.shape[-1] == 1:
             x = x.squeeze(-1)
         elif x.ndim == 3:

@@ -1,4 +1,4 @@
-"""Model trainer, optimization loop, and validation workflow."""
+"""Model trainer, optimization loop, and validation workflow for ElectricDevices."""
 
 import logging
 import time
@@ -57,15 +57,11 @@ class Trainer:
 
         self.model.to(self.device)
 
-        # Loss function (CrossEntropyLoss with optional balanced class weighting)
+        # Loss function (CrossEntropyLoss without pre-applied softmax)
         weight_tensor: torch.Tensor | None = None
         if config.training.use_class_weights:
-            # Inverse frequency balanced weights based on official split: ~291 class 0 and ~109 class 1
-            weight_tensor = torch.tensor(
-                [500.0 / (2.0 * 291.0), 500.0 / (2.0 * 109.0)], device=self.device
-            )
             logger.info(
-                f"Initialized weighted CrossEntropyLoss with weights: {weight_tensor.tolist()}"
+                "Class weights enabled but default uniform weighting is retained until calibrated."
             )
         self.criterion = nn.CrossEntropyLoss(weight=weight_tensor)
 
@@ -80,7 +76,7 @@ class Trainer:
         else:
             raise ValueError(f"Unsupported optimizer: {config.training.optimizer}")
 
-        # Early stopping callback
+        # Early stopping callback (strictly minimizing val_loss)
         self.early_stopping = EarlyStopping(
             patience=config.training.patience,
             min_delta=config.training.min_delta,
@@ -91,7 +87,7 @@ class Trainer:
         self.best_checkpoint_path: Path | None = None
 
     def train_epoch(self, train_loader: DataLoader) -> tuple[float, float]:
-        """Execute one training epoch.
+        """Execute one training epoch with sample-weighted loss accumulation.
 
         Args:
             train_loader: Training DataLoader.
@@ -150,7 +146,7 @@ class Trainer:
 
         all_preds: list[int] = []
         all_targets: list[int] = []
-        all_probs: list[float] = []
+        all_probs: list[list[float]] = []
 
         start_time = time.perf_counter()
 
@@ -166,7 +162,7 @@ class Trainer:
                 total_loss += loss.item() * batch_size
                 total_samples += batch_size
 
-                probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+                probs = torch.softmax(logits, dim=1).cpu().numpy()
                 preds = torch.argmax(logits, dim=1).cpu().numpy()
 
                 all_preds.extend(preds.tolist())
@@ -217,7 +213,8 @@ class Trainer:
             val_loss = val_metrics["loss"]
             val_acc = val_metrics["accuracy"]
             val_bal_acc = val_metrics["balanced_accuracy"]
-            val_f1 = val_metrics["f1"]
+            val_macro_f1 = val_metrics["macro_f1"]
+            val_weighted_f1 = val_metrics["weighted_f1"]
 
             self.history.add_epoch(
                 epoch=epoch,
@@ -225,12 +222,13 @@ class Trainer:
                 train_acc=train_acc,
                 val_loss=val_loss,
                 val_acc=val_acc,
+                val_macro_f1=val_macro_f1,
                 val_balanced_accuracy=val_bal_acc,
-                val_f1=val_f1,
+                val_weighted_f1=val_weighted_f1,
                 epoch_time_sec=epoch_duration,
             )
 
-            # Check early stopping / best score
+            # Check early stopping / best score based strictly on val_loss
             is_best = self.early_stopping.step(val_loss, epoch)
 
             if is_best:
@@ -250,7 +248,7 @@ class Trainer:
                 logger.info(
                     f"Epoch {epoch:03d}/{self.config.training.max_epochs} | "
                     f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
-                    f"Val Loss: {val_loss:.4f}, Val BalAcc: {val_bal_acc:.4f}, Val F1: {val_f1:.4f} "
+                    f"Val Loss: {val_loss:.4f}, Val BalAcc: {val_bal_acc:.4f}, Val MacroF1: {val_macro_f1:.4f} "
                     f"({'BEST' if is_best else ''})"
                 )
 

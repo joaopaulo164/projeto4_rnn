@@ -9,8 +9,8 @@ model:
   bidirectional: false
   batch_first: true
   pooling: "best_pooling"
-  num_classes: 2
+  num_classes: 7
   expected_parameters:
-    simple_pooling: 4546
-    mean_max_pooling: 4610
+    simple_pooling: 4711
+    mean_max_pooling: 4935
 description: "LSTM-32 with the winning pooling strategy from Phase 2"

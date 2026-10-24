@@ -13,22 +13,24 @@ from project4_rnn.training.history import TrainingHistory
 
 
 def test_classification_metrics_computation() -> None:
-    """Verify standard binary classification metrics including balanced accuracy and specificity."""
-    y_true = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=np.int64)
-    y_pred = np.array([0, 0, 0, 1, 1, 1, 1, 0], dtype=np.int64)
-    y_prob = np.array([0.1, 0.2, 0.3, 0.8, 0.9, 0.7, 0.85, 0.4], dtype=np.float64)
+    """Verify multiclass classification metrics including macro F1, balanced accuracy, and per-class stats."""
+    # 7 classes with 1 sample each, plus 1 extra
+    y_true = np.array([0, 1, 2, 3, 4, 5, 6, 0], dtype=np.int64)
+    y_pred = np.array([0, 1, 2, 3, 4, 5, 6, 1], dtype=np.int64)
+    # y_prob: shape (8, 7)
+    y_prob = np.zeros((8, 7), dtype=np.float64)
+    for i, p in enumerate(y_pred):
+        y_prob[i, p] = 0.9
 
-    metrics = compute_classification_metrics(y_true, y_pred, y_prob, loss=0.35)
+    metrics = compute_classification_metrics(y_true, y_pred, y_prob, loss=0.35, num_classes=7)
 
-    assert metrics["accuracy"] == 0.75
-    # Class 0 recall: 3/4 = 0.75, Class 1 recall: 3/4 = 0.75 -> bal acc = 0.75
-    assert metrics["balanced_accuracy"] == 0.75
-    assert metrics["specificity"] == 0.75
-    assert metrics["true_positives"] == 3
-    assert metrics["true_negatives"] == 3
-    assert metrics["false_positives"] == 1
-    assert metrics["false_negatives"] == 1
-    assert metrics["roc_auc"] is not None
+    assert "macro_f1" in metrics
+    assert "balanced_accuracy" in metrics
+    assert "accuracy" in metrics
+    assert "macro_precision" in metrics
+    assert "macro_recall" in metrics
+    assert "per_class_metrics" in metrics
+    assert len(metrics["per_class_metrics"]) == 7
     assert metrics["loss"] == 0.35
 
 
@@ -66,7 +68,7 @@ def test_early_stopping_behavior() -> None:
 
 def test_checkpoint_save_and_load(tmp_path: Path) -> None:
     """Verify saving and restoring model and optimizer states."""
-    model = MLP32()
+    model = MLP32(input_size=96, hidden_size=32, num_classes=7)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     ckpt_path = tmp_path / "test_ckpt.pt"
 
@@ -79,7 +81,7 @@ def test_checkpoint_save_and_load(tmp_path: Path) -> None:
         optimizer=optimizer,
         epoch=5,
         val_loss=0.25,
-        metrics={"balanced_accuracy": 0.92},
+        metrics={"macro_f1": 0.92, "balanced_accuracy": 0.90},
         checkpoint_path=ckpt_path,
         seed=42,
     )
@@ -87,7 +89,7 @@ def test_checkpoint_save_and_load(tmp_path: Path) -> None:
     assert ckpt_path.is_file()
 
     # Create fresh model and load
-    new_model = MLP32()
+    new_model = MLP32(input_size=96, hidden_size=32, num_classes=7)
     new_opt = torch.optim.Adam(new_model.parameters(), lr=0.01)
     meta = load_checkpoint(ckpt_path, new_model, new_opt)
 
@@ -99,8 +101,8 @@ def test_checkpoint_save_and_load(tmp_path: Path) -> None:
 def test_training_history_tracking(tmp_path: Path) -> None:
     """Verify history accumulation and CSV export."""
     history = TrainingHistory()
-    history.add_epoch(1, 0.5, 0.8, 0.4, 0.85, 0.84, 0.83, 1.2)
-    history.add_epoch(2, 0.3, 0.9, 0.25, 0.92, 0.91, 0.90, 1.1)
+    history.add_epoch(1, 0.5, 0.8, 0.4, 0.85, 0.84, 0.83, 0.82, 1.2)
+    history.add_epoch(2, 0.3, 0.9, 0.25, 0.92, 0.91, 0.90, 0.89, 1.1)
 
     df = history.to_dataframe()
     assert len(df) == 2

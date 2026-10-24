@@ -1,4 +1,4 @@
-"""Scientific visualization and publication-quality plot generation."""
+"""Scientific visualization and publication-quality plot generation for ElectricDevices."""
 
 import logging
 from pathlib import Path
@@ -10,7 +10,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, precision_recall_curve, roc_curve
+from sklearn.metrics import confusion_matrix
+
+from project4_rnn.constants import NUM_CLASSES, OFFICIAL_CLASSES
 
 logger = logging.getLogger("project4_rnn.evaluation.plots")
 
@@ -35,7 +37,7 @@ def plot_training_curves(
     experiment_id: str = "",
     seed: int = 42,
 ) -> None:
-    """Plot training and validation loss and accuracy curves across epochs."""
+    """Plot training and validation loss and multiclass metrics curves across epochs."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -51,36 +53,46 @@ def plot_training_curves(
     ax1.set_title(f"Loss Curves ({experiment_id} - Seed {seed})")
     ax1.legend()
 
-    # Balanced Accuracy curve
+    # Multiclass Validation metrics
+    if "val_macro_f1" in history_df.columns:
+        ax2.plot(
+            history_df["epoch"],
+            history_df["val_macro_f1"],
+            label="Val Macro F1",
+            color="#2ca02c",
+            lw=2,
+        )
+    elif "val_f1" in history_df.columns:
+        ax2.plot(
+            history_df["epoch"],
+            history_df["val_f1"],
+            label="Val Macro F1",
+            color="#2ca02c",
+            lw=2,
+        )
+
     if "val_balanced_accuracy" in history_df.columns:
         ax2.plot(
             history_df["epoch"],
             history_df["val_balanced_accuracy"],
             label="Val Bal Acc",
-            color="#2ca02c",
-            lw=2,
-        )
-    if "val_f1" in history_df.columns:
-        ax2.plot(
-            history_df["epoch"],
-            history_df["val_f1"],
-            label="Val F1",
             color="#9467bd",
-            lw=2,
+            lw=1.8,
             linestyle="--",
         )
-    if "train_acc" in history_df.columns:
+
+    if "val_acc" in history_df.columns:
         ax2.plot(
             history_df["epoch"],
-            history_df["train_acc"],
-            label="Train Acc",
+            history_df["val_acc"],
+            label="Val Accuracy",
             color="#1f77b4",
             lw=1.5,
-            alpha=0.7,
+            alpha=0.6,
         )
 
     ax2.set_xlabel("Epoch")
-    ax2.set_ylabel("Metric Score")
+    ax2.set_ylabel("Score")
     ax2.set_title(f"Validation Metrics ({experiment_id} - Seed {seed})")
     ax2.set_ylim(0.0, 1.02)
     ax2.legend()
@@ -95,37 +107,52 @@ def plot_confusion_matrix(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     output_path: Path,
-    title: str = "Confusion Matrix",
+    title: str = "Multiclass Confusion Matrix",
+    normalize: bool = True,
+    num_classes: int = NUM_CLASSES,
 ) -> None:
-    """Plot normalized and count confusion matrix heatmap."""
+    """Plot 7x7 confusion matrix heatmap (counts or normalized percentages)."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    cm_norm = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
+    labels_list = list(range(num_classes))
+    if set(np.unique(y_true)).issubset(set(range(1, num_classes + 1))):
+        labels_list = list(range(1, num_classes + 1))
 
-    fig, ax = plt.subplots(figsize=(6, 5))
-    labels = ["Class 0 (Neg)", "Class 1 (Pos)"]
+    cm = confusion_matrix(y_true, y_pred, labels=labels_list)
+    class_names = [f"Class {c}" for c in OFFICIAL_CLASSES]
 
-    annot = np.array(
-        [
-            [f"{count}\n({norm:.1%})" for count, norm in zip(row_c, row_n, strict=False)]
-            for row_c, row_n in zip(cm, cm_norm, strict=False)
-        ]
-    )
+    fig, ax = plt.subplots(figsize=(8, 6.5))
 
-    sns.heatmap(
-        cm_norm,
-        annot=annot,
-        fmt="",
-        cmap="Blues",
-        xticklabels=labels,
-        yticklabels=labels,
-        ax=ax,
-        cbar=True,
-        vmin=0.0,
-        vmax=1.0,
-    )
+    if normalize:
+        cm_sum = cm.sum(axis=1, keepdims=True)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cm_display = np.where(cm_sum > 0, cm / cm_sum, 0.0)
+        vmax = 1.0
+        sns.heatmap(
+            cm_display,
+            annot=True,
+            fmt=".1%",
+            cmap="Blues",
+            xticklabels=class_names,
+            yticklabels=class_names,
+            ax=ax,
+            cbar=True,
+            vmin=0.0,
+            vmax=vmax,
+        )
+    else:
+        sns.heatmap(
+            cm,
+            annot=True,
+            fmt="d",
+            cmap="Blues",
+            xticklabels=class_names,
+            yticklabels=class_names,
+            ax=ax,
+            cbar=True,
+        )
+
     ax.set_xlabel("Predicted Label")
     ax.set_ylabel("True Label")
     ax.set_title(title)
@@ -136,86 +163,42 @@ def plot_confusion_matrix(
     logger.info(f"Saved confusion matrix to {output_path}")
 
 
-def plot_roc_and_pr_curves(
-    y_true: np.ndarray,
-    y_prob: np.ndarray,
-    output_path: Path,
-    title_suffix: str = "",
-) -> None:
-    """Plot ROC and Precision-Recall curves."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    precision, recall, _ = precision_recall_curve(y_true, y_prob)
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
-    # ROC
-    ax1.plot(fpr, tpr, color="#1f77b4", lw=2, label="ROC curve")
-    ax1.plot([0, 1], [0, 1], color="grey", linestyle="--", lw=1)
-    ax1.set_xlabel("False Positive Rate")
-    ax1.set_ylabel("True Positive Rate")
-    ax1.set_title(f"ROC Curve {title_suffix}")
-    ax1.legend(loc="lower right")
-
-    # PR
-    ax2.plot(recall, precision, color="#2ca02c", lw=2, label="PR curve")
-    ax2.set_xlabel("Recall")
-    ax2.set_ylabel("Precision")
-    ax2.set_title(f"Precision-Recall Curve {title_suffix}")
-    ax2.legend(loc="lower left")
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
-    plt.close(fig)
-    logger.info(f"Saved ROC/PR curves to {output_path}")
-
-
 def plot_class_distribution(
-    y_dev_orig: np.ndarray,
-    y_test_orig: np.ndarray,
-    y_dev_bin: np.ndarray,
-    y_test_bin: np.ndarray,
+    y_train: np.ndarray,
+    y_val: np.ndarray,
+    y_test: np.ndarray,
     output_path: Path,
 ) -> None:
-    """Plot bar charts of original multiclass and adapted binary distributions."""
+    """Plot bar chart of sample counts across all 7 ElectricDevices classes in train/val/test splits."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+    fig, ax = plt.subplots(figsize=(10, 5))
 
-    # Original classes
-    orig_classes = sorted(set(y_dev_orig).union(set(y_test_orig)))
-    dev_counts = [np.sum(y_dev_orig == c) for c in orig_classes]
-    test_counts = [np.sum(y_test_orig == c) for c in orig_classes]
+    classes = list(OFFICIAL_CLASSES)
+    # Check if inputs are 0-indexed internal or 1-indexed official
+    if set(np.unique(y_train)).issubset(set(range(NUM_CLASSES))):
+        train_counts = [np.sum(y_train == (c - 1)) for c in classes]
+        val_counts = [np.sum(y_val == (c - 1)) for c in classes]
+        test_counts = [np.sum(y_test == (c - 1)) for c in classes]
+    else:
+        train_counts = [np.sum(y_train == c) for c in classes]
+        val_counts = [np.sum(y_val == c) for c in classes]
+        test_counts = [np.sum(y_test == c) for c in classes]
 
-    x = np.arange(len(orig_classes))
-    width = 0.35
+    x = np.arange(len(classes))
+    width = 0.25
 
-    ax1.bar(x - width / 2, dev_counts, width, label="Development (500)", color="#3b82d4")
-    ax1.bar(x + width / 2, test_counts, width, label="Test (4500)", color="#f59e0b")
-    ax1.set_xlabel("Original ECG5000 Class")
-    ax1.set_ylabel("Sample Count")
-    ax1.set_title("Original 5-Class Distribution")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels([f"Class {c}" for c in orig_classes])
-    ax1.legend()
+    ax.bar(x - width, train_counts, width, label=f"Train ({len(y_train)})", color="#3b82d4")
+    ax.bar(x, val_counts, width, label=f"Validation ({len(y_val)})", color="#10b981")
+    ax.bar(x + width, test_counts, width, label=f"Official Test ({len(y_test)})", color="#f59e0b")
 
-    # Binary classes
-    bin_classes = [0, 1]
-    dev_bin_counts = [np.sum(y_dev_bin == c) for c in bin_classes]
-    test_bin_counts = [np.sum(y_test_bin == c) for c in bin_classes]
-
-    xb = np.arange(len(bin_classes))
-    ax2.bar(xb - width / 2, dev_bin_counts, width, label="Development (500)", color="#3b82d4")
-    ax2.bar(xb + width / 2, test_bin_counts, width, label="Test (4500)", color="#f59e0b")
-    ax2.set_xlabel("Binary Label")
-    ax2.set_ylabel("Sample Count")
-    ax2.set_title("Adapted Binary Distribution (0: Normal, 1: Abnormal)")
-    ax2.set_xticks(xb)
-    ax2.set_xticklabels(["0 (Class 1)", "1 (Classes 2-5)"])
-    ax2.legend()
+    ax.set_xlabel("ElectricDevices Class (Official 1 to 7)")
+    ax.set_ylabel("Sample Count")
+    ax.set_title("ElectricDevices Class Distribution Across Partitions")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"Class {c}" for c in classes])
+    ax.legend()
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
@@ -225,33 +208,35 @@ def plot_class_distribution(
 
 def plot_time_series_samples(
     X: np.ndarray,
-    y_bin: np.ndarray,
+    y: np.ndarray,
     output_path: Path,
-    num_samples_per_class: int = 4,
+    samples_per_class: int = 3,
 ) -> None:
-    """Plot representative time series curves for each binary class."""
+    """Plot representative time series curves (length 96) for each of the 7 classes."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.5), sharey=True)
+    fig, axes = plt.subplots(2, 4, figsize=(16, 7), sharey=True)
+    axes_flat = axes.flatten()
 
     time_steps = np.arange(X.shape[1])
+    is_zero_indexed = set(np.unique(y)).issubset(set(range(NUM_CLASSES)))
 
-    idx_class_0 = np.where(y_bin == 0)[0][:num_samples_per_class]
-    idx_class_1 = np.where(y_bin == 1)[0][:num_samples_per_class]
+    for idx, official_class in enumerate(OFFICIAL_CLASSES):
+        ax = axes_flat[idx]
+        target_val = (official_class - 1) if is_zero_indexed else official_class
+        class_indices = np.where(y == target_val)[0][:samples_per_class]
 
-    for idx in idx_class_0:
-        ax1.plot(time_steps, X[idx], alpha=0.8, lw=1.5, label=f"Sample {idx}")
-    ax1.set_title("Class 0 (Negative / Original Class 1)")
-    ax1.set_xlabel("Time Step (t)")
-    ax1.set_ylabel("Amplitude")
-    ax1.legend(loc="upper right")
+        for s_idx in class_indices:
+            ax.plot(time_steps, X[s_idx], alpha=0.8, lw=1.5, label=f"#{s_idx}")
 
-    for idx in idx_class_1:
-        ax2.plot(time_steps, X[idx], alpha=0.8, lw=1.5, label=f"Sample {idx}")
-    ax2.set_title("Class 1 (Positive / Original Classes 2-5)")
-    ax2.set_xlabel("Time Step (t)")
-    ax2.legend(loc="upper right")
+        ax.set_title(f"Class {official_class}")
+        ax.set_xlabel("Time Step (t = 0..95)")
+        if idx % 4 == 0:
+            ax.set_ylabel("Normalized Signal")
+
+    # Hide extra unused subplot (8th subplot)
+    axes_flat[7].set_visible(False)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
@@ -263,7 +248,7 @@ def plot_pooling_ablation(
     ablation_df: pd.DataFrame,
     output_path: Path,
 ) -> None:
-    """Plot Phase 2 pooling ablation comparison bar chart with standard deviation error bars."""
+    """Plot Phase 2 pooling ablation comparison bar chart with Macro F1 score and std error bars."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -274,17 +259,27 @@ def plot_pooling_ablation(
         n.replace("E02_", "").replace("E03_", "").replace("E04_", "").replace("E05_", "")
         for n in names
     ]
-    means = np.asarray(ablation_df["val_balanced_accuracy_mean"].to_numpy(), dtype=np.float64)
-    stds = np.asarray(ablation_df["val_balanced_accuracy_std"].to_numpy(), dtype=np.float64)
+
+    metric_col = (
+        "val_macro_f1_mean" if "val_macro_f1_mean" in ablation_df.columns else "val_f1_mean"
+    )
+    std_col = "val_macro_f1_std" if "val_macro_f1_std" in ablation_df.columns else "val_f1_std"
+
+    means = np.asarray(ablation_df[metric_col].to_numpy(), dtype=np.float64)
+    stds = (
+        np.asarray(ablation_df[std_col].to_numpy(), dtype=np.float64)
+        if std_col in ablation_df.columns
+        else np.zeros_like(means)
+    )
 
     x = np.arange(len(labels))
     bars = ax.bar(x, means, yerr=stds, capsize=5, color="#3b82d4", alpha=0.85, edgecolor="#1e40af")
 
-    ax.set_ylabel("Val Balanced Accuracy")
+    ax.set_ylabel("Val Macro F1")
     ax.set_title("Phase 2: GRU-32 Temporal Pooling Ablation (5 Seeds)")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=15)
-    ax.set_ylim(min(0.8, max(0.0, float(np.min(means) - 0.1))), 1.02)
+    ax.set_ylim(min(0.5, max(0.0, float(np.min(means) - 0.1))), 1.02)
 
     for bar, mean in zip(bars, means, strict=False):
         height = bar.get_height()
@@ -309,16 +304,18 @@ def plot_seed_stability(
     metrics_by_seed_df: pd.DataFrame,
     output_path: Path,
 ) -> None:
-    """Plot boxplot and jitter of validation balanced accuracy across all configurations."""
+    """Plot boxplot and jitter of validation Macro F1 across all configurations."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(12, 5.5))
 
+    y_col = "val_macro_f1" if "val_macro_f1" in metrics_by_seed_df.columns else "val_f1"
+
     sns.boxplot(
         data=metrics_by_seed_df,
         x="experiment_id",
-        y="val_balanced_accuracy",
+        y=y_col,
         hue="experiment_id",
         palette="Blues",
         legend=False,
@@ -328,7 +325,7 @@ def plot_seed_stability(
     sns.stripplot(
         data=metrics_by_seed_df,
         x="experiment_id",
-        y="val_balanced_accuracy",
+        y=y_col,
         color="red",
         size=6,
         jitter=0.2,
@@ -337,8 +334,8 @@ def plot_seed_stability(
     )
 
     ax.set_xlabel("Experiment")
-    ax.set_ylabel("Validation Balanced Accuracy")
-    ax.set_title("Seed Optimization Stability Across Architectures (Seeds 7, 21, 42, 84, 168)")
+    ax.set_ylabel("Validation Macro F1")
+    ax.set_title("Seed Stability Across Architectures (Seeds 7, 21, 42, 84, 168)")
     plt.xticks(rotation=30, ha="right")
 
     plt.tight_layout()
@@ -355,26 +352,29 @@ def plot_cell_and_capacity_comparisons(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Balanced Accuracy vs Parameters
+    y_col = "val_macro_f1_mean" if "val_macro_f1_mean" in summary_df.columns else "val_f1_mean"
+
+    # 1. Macro F1 vs Parameters
     fig, ax = plt.subplots(figsize=(9, 5.5))
     for _, row in summary_df.iterrows():
         exp = str(row["experiment_id"])
         params = row["total_parameters"]
-        acc = row.get("val_balanced_accuracy_mean", 0.0)
-        ax.scatter(params, acc, s=120, label=exp)
+        f1_val = row.get(y_col, 0.0)
+        ax.scatter(params, f1_val, s=120, label=exp)
         ax.annotate(
             exp,
-            (params, acc),
+            (params, f1_val),
             xytext=(5, 5),
             textcoords="offset points",
             fontsize=8,
         )
 
     ax.set_xlabel("Total Parameter Count")
-    ax.set_ylabel("Mean Val Balanced Accuracy")
-    ax.set_title("Balanced Accuracy vs Parameter Complexity")
+    ax.set_ylabel("Mean Val Macro F1")
+    ax.set_title("Validation Macro F1 vs Parameter Complexity")
     plt.tight_layout()
     plt.savefig(output_dir / "accuracy_vs_parameters.png", dpi=300)
+    plt.savefig(output_dir / "f1_vs_parameters.png", dpi=300)
     plt.close(fig)
 
     # 2. Performance vs Training Time
@@ -382,19 +382,19 @@ def plot_cell_and_capacity_comparisons(
     for _, row in summary_df.iterrows():
         exp = str(row["experiment_id"])
         ttime = row.get("total_training_time_sec_mean", 0.0)
-        acc = row.get("val_balanced_accuracy_mean", 0.0)
-        ax.scatter(ttime, acc, s=120, label=exp)
+        f1_val = row.get(y_col, 0.0)
+        ax.scatter(ttime, f1_val, s=120, label=exp)
         ax.annotate(
             exp,
-            (ttime, acc),
+            (ttime, f1_val),
             xytext=(5, 5),
             textcoords="offset points",
             fontsize=8,
         )
 
     ax.set_xlabel("Mean Total Training Time (seconds)")
-    ax.set_ylabel("Mean Val Balanced Accuracy")
-    ax.set_title("Validation Performance vs Computational Training Time")
+    ax.set_ylabel("Mean Val Macro F1")
+    ax.set_title("Validation Macro F1 vs Computational Training Time")
     plt.tight_layout()
     plt.savefig(output_dir / "performance_vs_time.png", dpi=300)
     plt.close(fig)

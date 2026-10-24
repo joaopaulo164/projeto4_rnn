@@ -1,12 +1,12 @@
 # Projeto 4: Classificação de Séries Temporais com Redes Neurais Recorrentes (RNN)
 
-Repositório científico completo, modular, testável e reprodutível para classificação binária de séries temporais de eletrocardiograma (**ECG5000**), implementado em **Python 3.11+ e PyTorch**.
+Repositório científico completo, modular, testável e reprodutível para classificação multiclasse de séries temporais (**ElectricDevices - 7 classes**), implementado em **Python 3.11+ e PyTorch**.
 
 ---
 
 ## 1. Visão Geral e Perguntas de Pesquisa
 
-O estudo investiga o impacto de redes neurais recorrentes (GRU e LSTM), estratégias de agregação temporal (pooling) e aumento de capacidade na classificação binária de sinais de ECG, respondendo a seis questões científicas:
+O estudo investiga o impacto de redes neurais recorrentes (GRU e LSTM), estratégias de agregação temporal (pooling) e aumento de capacidade na classificação multiclasse de séries temporais de dispositivos elétricos, respondendo a seis questões científicas:
 
 - **RQ1**: A recorrência supera o baseline MLP?
 - **RQ2**: Qual estratégia de pooling temporal funciona melhor na GRU (Last State, Mean, Max, Mean+Max)?
@@ -192,7 +192,7 @@ python -m mypy src
 - [`docs/PROJECT_SCOPE.md`](docs/PROJECT_SCOPE.md): Escopo e objetivos da pesquisa.
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): Requisitos de software e hardware.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): Arquitetura do software e diagramas de componentes.
-- [`docs/DATASET.md`](docs/DATASET.md): Detalhamento do dataset ECG5000 e binarização.
+- [`docs/DATASET.md`](docs/DATASET.md): Detalhamento do dataset ElectricDevices e mapeamento de 7 classes.
 - [`docs/DATA_GOVERNANCE.md`](docs/DATA_GOVERNANCE.md): Governança de dados e integridade.
 - [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md): Metodologia científica e tratamento de hipóteses.
 - [`docs/EXPERIMENTAL_PROTOCOL.md`](docs/EXPERIMENTAL_PROTOCOL.md): Protocolo experimental e matriz de comparações.
@@ -214,8 +214,7 @@ python -m mypy src
 
 ## 8. Limitações Científicas
 
-1. Os resultados da tarefa binária não devem ser comparados com estudos que avaliam as 5 classes originais.
-2. O conjunto de validação é limitado a 100 amostras (20% de desenvolvimento).
-3. As 5 sementes medem estabilidade do processo de otimização sobre a mesma partição fixa.
-4. As predições não possuem validação clínica comprovada.
-5. O conjunto oficial de teste (4.500 amostras) foi reservado exclusivamente para a avaliação final do modelo campeão.
+1. Os resultados referem-se ao benchmark oficial ElectricDevices do UCR/UEA Archive (16.637 séries temporais, 7 classes, L=96).
+2. O conjunto de validação é de ~1.785 amostras (20% do treino oficial de 8.926 amostras).
+3. As 5 sementes medem estabilidade do processo de otimização sobre a mesma partição fixa (seed 42).
+4. O conjunto oficial de teste (7.711 amostras) foi reservado exclusivamente para a avaliação final do modelo campeão selecionado por validação e parcimônia.

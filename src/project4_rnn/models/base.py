@@ -7,7 +7,7 @@ import torch.nn as nn
 
 
 class BaseTimeSeriesModel(nn.Module, ABC):
-    """Abstract base class for all ECG5000 classification models."""
+    """Abstract base class for all ElectricDevices multiclass classification models."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -17,7 +17,7 @@ class BaseTimeSeriesModel(nn.Module, ABC):
         """Forward pass.
 
         Args:
-            x: Input tensor. Shape (batch, 140) for MLP or (batch, 140, 1) for RNN.
+            x: Input tensor. Shape (batch, 96) for MLP or (batch, 96, 1) for RNN.
 
         Returns:
             Logits tensor of shape (batch, num_classes).

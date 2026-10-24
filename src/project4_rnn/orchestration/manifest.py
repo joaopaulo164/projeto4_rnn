@@ -147,16 +147,13 @@ class PipelineManifest:
             lines.extend(
                 [
                     "",
-                    "## 4. Desempenho no Teste Oficial (4.500 amostras)",
+                    "## 4. Desempenho no Teste Oficial (7.711 amostras)",
                     "",
+                    f"- **Macro F1**: {final_test_metrics.get('macro_f1', final_test_metrics.get('f1', 0.0)):.4f}",
                     f"- **Balanced Accuracy**: {final_test_metrics.get('balanced_accuracy', 0.0):.4f}",
-                    f"- **F1-Score**: {final_test_metrics.get('f1', 0.0):.4f}",
                     f"- **Accuracy**: {final_test_metrics.get('accuracy', 0.0):.4f}",
-                    f"- **Precision**: {final_test_metrics.get('precision', 0.0):.4f}",
-                    f"- **Recall**: {final_test_metrics.get('recall', 0.0):.4f}",
-                    f"- **Specificity**: {final_test_metrics.get('specificity', 0.0):.4f}",
-                    f"- **ROC-AUC**: {final_test_metrics.get('roc_auc', 'N/A')}",
-                    f"- **PR-AUC**: {final_test_metrics.get('pr_auc', 'N/A')}",
+                    f"- **Macro Precision**: {final_test_metrics.get('macro_precision', final_test_metrics.get('precision', 0.0)):.4f}",
+                    f"- **Macro Recall**: {final_test_metrics.get('macro_recall', final_test_metrics.get('recall', 0.0)):.4f}",
                     f"- **Loss**: {final_test_metrics.get('loss', 0.0):.4f}",
                 ]
             )

@@ -7,36 +7,52 @@ from typing import Any
 import yaml
 
 from project4_rnn.constants import (
-    OFFICIAL_DEV_SAMPLES,
+    INTERNAL_TO_OFFICIAL_LABEL,
+    NUM_CLASSES,
+    NUM_FEATURES,
     OFFICIAL_TEST_SAMPLES,
+    OFFICIAL_TO_INTERNAL_LABEL,
+    OFFICIAL_TRAIN_SAMPLES,
     PARSIMONY_THRESHOLD,
     SEQUENCE_LENGTH,
     SPLIT_SEED,
+    TEST_FILE_NAME,
+    TEST_MD5,
+    TRAIN_FILE_NAME,
+    TRAIN_MD5,
     TRAIN_SEEDS,
+    VAL_SPLIT_RATIO,
 )
 from project4_rnn.reproducibility import compute_object_hash
 
 
 @dataclass
 class DataConfig:
-    """Dataset and split configuration parameters."""
+    """Dataset and split configuration parameters for ElectricDevices."""
 
+    name: str = "ElectricDevices"
+    variant: str = "UCR_UEA_benchmark"
+    source: str = "UCR_UEA_Time_Series_Classification_Archive"
     raw_dir: str = "data/raw"
     processed_dir: str = "data/processed"
-    dataset_name: str = "ECG5000"
-    expected_sequence_length: int = SEQUENCE_LENGTH
-    expected_features: int = 1
-    expected_dev_samples: int = OFFICIAL_DEV_SAMPLES
-    expected_test_samples: int = OFFICIAL_TEST_SAMPLES
+    train_size: int = OFFICIAL_TRAIN_SAMPLES
+    test_size: int = OFFICIAL_TEST_SAMPLES
+    sequence_length: int = SEQUENCE_LENGTH
+    number_of_classes: int = NUM_CLASSES
+    number_of_dimensions: int = NUM_FEATURES
+    official_split: bool = True
+    train_file: str = TRAIN_FILE_NAME
+    test_file: str = TEST_FILE_NAME
+    train_md5: str = TRAIN_MD5
+    test_md5: str = TEST_MD5
     split_seed: int = SPLIT_SEED
-    train_samples: int = 400
-    val_samples: int = 100
+    val_split_ratio: float = VAL_SPLIT_RATIO
     stratified: bool = True
-    binary_mapping: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "negative_class": [1],
-            "positive_class": [2, 3, 4, 5],
-        }
+    official_to_internal_label: dict[int, int] = field(
+        default_factory=lambda: dict(OFFICIAL_TO_INTERNAL_LABEL)
+    )
+    internal_to_official_label: dict[int, int] = field(
+        default_factory=lambda: dict(INTERNAL_TO_OFFICIAL_LABEL)
     )
     normalization: dict[str, Any] = field(
         default_factory=lambda: {
@@ -71,9 +87,9 @@ class SelectionConfig:
     """Decision criteria for pooling and model selection."""
 
     parsimony_threshold: float = PARSIMONY_THRESHOLD
-    primary_metric: str = "val_balanced_accuracy"
-    first_tie_breaker: str = "val_f1"
-    second_tie_breaker: str = "val_balanced_accuracy_std"
+    primary_metric: str = "val_macro_f1"
+    first_tie_breaker: str = "val_balanced_accuracy"
+    second_tie_breaker: str = "val_macro_f1_std"
     third_tie_breaker: str = "mean_training_time"
     final_tie_breaker: str = "parameter_count"
 
@@ -92,13 +108,13 @@ class ModelConfig:
     """Neural network model architecture settings."""
 
     architecture: str = "mlp"  # "mlp", "gru", "lstm"
-    input_size: int = 140  # 140 for mlp, 1 for rnn
+    input_size: int = 96  # 96 for mlp, 1 for rnn
     hidden_size: int = 32  # 32 or 64
     num_layers: int = 1
     bidirectional: bool = False
     batch_first: bool = True
     pooling: str | None = None  # "last", "mean", "max", "mean_max", "best_pooling"
-    num_classes: int = 2
+    num_classes: int = 7
     expected_parameters: int | dict[str, int] | None = None
 
 
@@ -237,8 +253,11 @@ def build_experiment_config(
 
     validate_config_dict(merged)
 
+    # Handle dataset key if present (YAML uses 'data' or 'dataset')
+    data_dict = merged.get("data", merged.get("dataset", {}))
+
     # Instantiate nested dataclasses
-    data_cfg = DataConfig(**merged.get("data", {}))
+    data_cfg = DataConfig(**data_dict)
     training_cfg = TrainingConfig(**merged.get("training", {}))
     selection_cfg = SelectionConfig(**merged.get("selection", {}))
     system_cfg = SystemConfig(**merged.get("system", {}))

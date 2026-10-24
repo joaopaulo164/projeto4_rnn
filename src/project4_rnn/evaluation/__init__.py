@@ -1,11 +1,11 @@
-"""Evaluation metrics, prediction artifacts, statistical consolidation, and plots."""
+"""Evaluation metrics, prediction artifacts, statistical consolidation, and plots for ElectricDevices."""
 
 from project4_rnn.evaluation.metrics import compute_classification_metrics
 from project4_rnn.evaluation.plots import (
+    plot_cell_and_capacity_comparisons,
     plot_class_distribution,
     plot_confusion_matrix,
     plot_pooling_ablation,
-    plot_roc_and_pr_curves,
     plot_seed_stability,
     plot_time_series_samples,
     plot_training_curves,
@@ -23,9 +23,9 @@ __all__ = [
     "create_summary_dataframe",
     "plot_training_curves",
     "plot_confusion_matrix",
-    "plot_roc_and_pr_curves",
     "plot_class_distribution",
     "plot_time_series_samples",
     "plot_pooling_ablation",
     "plot_seed_stability",
+    "plot_cell_and_capacity_comparisons",
 ]

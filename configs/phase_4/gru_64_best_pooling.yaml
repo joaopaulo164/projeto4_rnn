@@ -9,8 +9,8 @@ model:
   bidirectional: false
   batch_first: true
   pooling: "best_pooling"
-  num_classes: 2
+  num_classes: 7
   expected_parameters:
-    simple_pooling: 12994
-    mean_max_pooling: 13122
+    simple_pooling: 13319
+    mean_max_pooling: 13767
 description: "GRU-64 (increased capacity) with winning pooling strategy from Phase 2"

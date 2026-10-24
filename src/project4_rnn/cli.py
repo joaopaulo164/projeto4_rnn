@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from project4_rnn.audit.artifacts import clean_generated_artifacts
 from project4_rnn.audit.compliance import ComplianceAuditor
 from project4_rnn.audit.report import generate_audit_report
 from project4_rnn.config import build_experiment_config
@@ -170,7 +171,7 @@ def cmd_select_final_model(args: argparse.Namespace) -> int:
 
 
 def cmd_evaluate_final_model(args: argparse.Namespace) -> int:
-    """Evaluate frozen winning model on official 4,500 test set."""
+    """Evaluate frozen winning model on official 7,711 test set."""
     base_config_path = (
         Path(args.config) if hasattr(args, "config") and args.config else Path("configs/base.yaml")
     )
@@ -293,12 +294,12 @@ def cmd_smoke_test(args: argparse.Namespace) -> int:
     smoke_artifacts.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Create small synthetic test partitions (20 samples dev, 20 samples test, 140 points)
+        # Create small synthetic test partitions (20 samples train, 10 samples val, 96 points, 7 classes)
         np.random.seed(42)
-        X_mock_train = np.random.randn(20, 140).astype(np.float32)
-        y_mock_train = np.random.randint(0, 2, size=20, dtype=np.int64)
-        X_mock_val = np.random.randn(10, 140).astype(np.float32)
-        y_mock_val = np.random.randint(0, 2, size=10, dtype=np.int64)
+        X_mock_train = np.random.randn(20, 96).astype(np.float32)
+        y_mock_train = np.random.randint(0, 7, size=20, dtype=np.int64)
+        X_mock_val = np.random.randn(10, 96).astype(np.float32)
+        y_mock_val = np.random.randint(0, 7, size=10, dtype=np.int64)
 
         base_cfg = build_experiment_config(Path("configs/base.yaml"))
         base_cfg.training.max_epochs = 2
@@ -361,11 +362,24 @@ def cmd_smoke_test(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_clean_artifacts(args: argparse.Namespace) -> int:
+    """Clean generated artifacts, checkpoints, summaries, and cache."""
+    artifacts_dir = Path(args.artifacts_dir)
+    print(f"Cleaning generated artifacts from: {artifacts_dir}")
+    try:
+        clean_generated_artifacts(artifacts_dir=artifacts_dir)
+        print("Generated artifacts cleaned successfully.")
+        return 0
+    except Exception as e:
+        logger.error(f"Clean artifacts failed: {e}", exc_info=True)
+        return 1
+
+
 def main() -> None:
     """CLI entrypoint dispatcher."""
     parser = argparse.ArgumentParser(
         prog="project4_rnn",
-        description="Project 4: Time Series Classification with RNNs on ECG5000",
+        description="Project 4: Time Series Classification with RNNs on ElectricDevices",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -472,6 +486,11 @@ def main() -> None:
     # 12. smoke-test
     p_smoke = subparsers.add_parser("smoke-test", help="Fast end-to-end smoke test")
     p_smoke.set_defaults(func=cmd_smoke_test)
+
+    # 13. clean-artifacts
+    p_clean = subparsers.add_parser("clean-artifacts", help="Clean generated run artifacts")
+    p_clean.add_argument("--artifacts-dir", default="artifacts", help="Artifacts root directory")
+    p_clean.set_defaults(func=cmd_clean_artifacts)
 
     parsed_args = parser.parse_args()
     exit_code = parsed_args.func(parsed_args)

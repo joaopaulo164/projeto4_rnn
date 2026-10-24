@@ -1,15 +1,15 @@
-# Escopo do Projeto - Projeto 4 (ECG5000 RNN)
+# Escopo do Projeto - Projeto 4 (ElectricDevices RNN)
 
 ## 1. Visão Geral
 
-O **Projeto 4** é uma implementação acadêmica e científica rigorosa destinada à **classificação binária de séries temporais de eletrocardiograma (ECG5000)** utilizando Redes Neurais Recorrentes (RNN - GRU e LSTM) e baselines neurais (MLP), desenvolvida em **Python 3.11+ e PyTorch**.
+O **Projeto 4** é uma implementação acadêmica e científica rigorosa destinada à **classificação multiclasse de séries temporais de consumo elétrico (ElectricDevices - 7 classes)** utilizando Redes Neurais Recorrentes (RNN - GRU e LSTM) e baselines neurais (MLP), desenvolvida em **Python 3.11+ e PyTorch**.
 
 ## 2. Perguntas de Pesquisa (Research Questions)
 
 O estudo é estruturado para produzir evidências empíricas reprodutíveis e responder a seis questões de pesquisa:
 
 - **RQ1. A recorrência supera a MLP?**
-  Compara o baseline MLP-32 (140 -> 32 -> 2) contra o melhor modelo GRU-32.
+  Compara o baseline MLP-32 (96 -> 32 -> 7) contra o melhor modelo GRU-32.
 - **RQ2. Qual estratégia de pooling funciona melhor na GRU?**
   Ablação de 4 estratégias temporais: *último estado*, *mean pooling*, *max pooling* e *mean + max pooling*.
 - **RQ3. GRU e LSTM diferem quando ambas possuem 32 unidades ocultas?**
@@ -19,7 +19,7 @@ O estudo é estruturado para produzir evidências empíricas reprodutíveis e re
 - **RQ5. A diferença entre GRU e LSTM permanece quando a capacidade aumenta?**
   Comparação das duas células recorrentes na capacidade expandida (64 unidades).
 - **RQ6. O possível ganho justifica o aumento do número de parâmetros e do tempo computacional?**
-  Análise conjunta de Balanced Accuracy, F1-Score, número de parâmetros, tempo por época, tempo de inferência e tempo total.
+  Análise conjunta de Macro F1, Balanced Accuracy, número de parâmetros, tempo por época, tempo de inferência e tempo total com aplicação do critério de parcimônia (margem de 0.005 Macro F1).
 
 ## 3. Entregáveis do Projeto
 

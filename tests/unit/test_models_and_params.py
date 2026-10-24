@@ -11,19 +11,19 @@ from project4_rnn.models.recurrent import RecurrentClassifier
 
 
 def test_mlp32_architecture_and_parameter_count() -> None:
-    """Verify E01 MLP-32 has exactly 4,578 parameters."""
-    model = MLP32(input_size=140, hidden_size=32, num_classes=2)
-    assert model.count_parameters() == 4578
-    assert model.count_trainable_parameters() == 4578
+    """Verify E01 MLP-32 has exactly 3,335 parameters for ElectricDevices (input 96, 7 classes)."""
+    model = MLP32(input_size=96, hidden_size=32, num_classes=7)
+    assert model.count_parameters() == 3335
+    assert model.count_trainable_parameters() == 3335
 
-    x = torch.randn(8, 140)
+    x = torch.randn(8, 96)
     out = model(x)
-    assert out.shape == (8, 2)
+    assert out.shape == (8, 7)
 
 
 def test_temporal_pooling_strategies() -> None:
     """Verify temporal pooling output tensor shapes and multipliers."""
-    batch_size, seq_len, hidden_size = 4, 140, 32
+    batch_size, seq_len, hidden_size = 4, 96, 32
     rnn_out = torch.randn(batch_size, seq_len, hidden_size)
 
     # 1. Last state pooling
@@ -50,22 +50,22 @@ def test_temporal_pooling_strategies() -> None:
 @pytest.mark.parametrize(
     "cell_type,hidden_size,pooling,expected_params",
     [
-        ("gru", 32, "last", 3426),
-        ("gru", 32, "mean", 3426),
-        ("gru", 32, "max", 3426),
-        ("gru", 32, "mean_max", 3490),
-        ("lstm", 32, "last", 4546),
-        ("lstm", 32, "mean", 4546),
-        ("lstm", 32, "max", 4546),
-        ("lstm", 32, "mean_max", 4610),
-        ("gru", 64, "last", 12994),
-        ("gru", 64, "mean", 12994),
-        ("gru", 64, "max", 12994),
-        ("gru", 64, "mean_max", 13122),
-        ("lstm", 64, "last", 17282),
-        ("lstm", 64, "mean", 17282),
-        ("lstm", 64, "max", 17282),
-        ("lstm", 64, "mean_max", 17410),
+        ("gru", 32, "last", 3591),
+        ("gru", 32, "mean", 3591),
+        ("gru", 32, "max", 3591),
+        ("gru", 32, "mean_max", 3815),
+        ("lstm", 32, "last", 4711),
+        ("lstm", 32, "mean", 4711),
+        ("lstm", 32, "max", 4711),
+        ("lstm", 32, "mean_max", 4935),
+        ("gru", 64, "last", 13319),
+        ("gru", 64, "mean", 13319),
+        ("gru", 64, "max", 13319),
+        ("gru", 64, "mean_max", 13767),
+        ("lstm", 64, "last", 17607),
+        ("lstm", 64, "mean", 17607),
+        ("lstm", 64, "max", 17607),
+        ("lstm", 64, "mean_max", 18055),
     ],
 )
 def test_recurrent_architectures_exact_parameter_counts(
@@ -74,7 +74,7 @@ def test_recurrent_architectures_exact_parameter_counts(
     pooling: str,
     expected_params: int,
 ) -> None:
-    """Verify that all recurrent configurations match theoretical parameter counts strictly."""
+    """Verify that all recurrent configurations match theoretical parameter counts strictly for 7 classes."""
     model = RecurrentClassifier(
         cell_type=cell_type,
         input_size=1,
@@ -83,32 +83,32 @@ def test_recurrent_architectures_exact_parameter_counts(
         bidirectional=False,
         batch_first=True,
         pooling=pooling,
-        num_classes=2,
+        num_classes=7,
     )
     assert model.count_parameters() == expected_params
     assert model.count_trainable_parameters() == expected_params
 
-    # Test forward pass with (batch, 140, 1) and (batch, 140)
-    x3d = torch.randn(4, 140, 1)
+    # Test forward pass with (batch, 96, 1) and (batch, 96)
+    x3d = torch.randn(4, 96, 1)
     out3d = model(x3d)
-    assert out3d.shape == (4, 2)
+    assert out3d.shape == (4, 7)
 
-    x2d = torch.randn(4, 140)
+    x2d = torch.randn(4, 96)
     out2d = model(x2d)
-    assert out2d.shape == (4, 2)
+    assert out2d.shape == (4, 7)
 
 
 def test_build_model_factory_validation() -> None:
     """Verify build_model builds valid models and detects mismatch."""
     m_cfg = ModelConfig(
         architecture="mlp",
-        input_size=140,
+        input_size=96,
         hidden_size=32,
-        num_classes=2,
+        num_classes=7,
     )
     exp_cfg = ExperimentConfig(
         experiment_id="E01_MLP_32",
         model=m_cfg,
     )
     model = build_model(exp_cfg, validate_params=True)
-    assert model.count_parameters() == 4578
+    assert model.count_parameters() == 3335

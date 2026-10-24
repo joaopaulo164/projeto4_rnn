@@ -18,8 +18,9 @@ class EpochRecord:
     train_acc: float
     val_loss: float
     val_acc: float
+    val_macro_f1: float
     val_balanced_accuracy: float
-    val_f1: float
+    val_weighted_f1: float
     epoch_time_sec: float
 
 
@@ -36,8 +37,9 @@ class TrainingHistory:
         train_acc: float,
         val_loss: float,
         val_acc: float,
+        val_macro_f1: float,
         val_balanced_accuracy: float,
-        val_f1: float,
+        val_weighted_f1: float,
         epoch_time_sec: float,
     ) -> None:
         """Add record for an epoch."""
@@ -47,8 +49,9 @@ class TrainingHistory:
             train_acc=train_acc,
             val_loss=val_loss,
             val_acc=val_acc,
+            val_macro_f1=val_macro_f1,
             val_balanced_accuracy=val_balanced_accuracy,
-            val_f1=val_f1,
+            val_weighted_f1=val_weighted_f1,
             epoch_time_sec=epoch_time_sec,
         )
         self.records.append(record)
@@ -63,8 +66,9 @@ class TrainingHistory:
                     "train_acc",
                     "val_loss",
                     "val_acc",
+                    "val_macro_f1",
                     "val_balanced_accuracy",
-                    "val_f1",
+                    "val_weighted_f1",
                     "epoch_time_sec",
                 ]
             )

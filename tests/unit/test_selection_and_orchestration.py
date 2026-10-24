@@ -17,30 +17,34 @@ from project4_rnn.orchestration.execution_plan import (
 
 
 def test_parsimony_rule_threshold(tmp_path: Path) -> None:
-    """Verify parsimony rule with 0.005 threshold (0.5 percentage points)."""
+    """Verify parsimony rule with 0.005 threshold (0.5 percentage points Macro F1)."""
     out_file = tmp_path / "pooling_selection.json"
 
     # Case A: mean_max lead is 0.003 (< 0.005 threshold) -> Must select simpler model (mean)
     summaries_a = [
         {
             "experiment_id": "E02_GRU_32_LAST",
+            "val_macro_f1_mean": 0.900,
             "val_balanced_accuracy_mean": 0.900,
-            "total_parameters": 3426,
+            "total_parameters": 3591,
         },
         {
             "experiment_id": "E03_GRU_32_MEAN",
+            "val_macro_f1_mean": 0.940,
             "val_balanced_accuracy_mean": 0.940,
-            "total_parameters": 3426,
+            "total_parameters": 3591,
         },
         {
             "experiment_id": "E04_GRU_32_MAX",
+            "val_macro_f1_mean": 0.920,
             "val_balanced_accuracy_mean": 0.920,
-            "total_parameters": 3426,
+            "total_parameters": 3591,
         },
         {
             "experiment_id": "E05_GRU_32_MEAN_MAX",
+            "val_macro_f1_mean": 0.943,
             "val_balanced_accuracy_mean": 0.943,
-            "total_parameters": 3490,
+            "total_parameters": 3815,
         },
     ]
 
@@ -52,23 +56,27 @@ def test_parsimony_rule_threshold(tmp_path: Path) -> None:
     summaries_b = [
         {
             "experiment_id": "E02_GRU_32_LAST",
+            "val_macro_f1_mean": 0.900,
             "val_balanced_accuracy_mean": 0.900,
-            "total_parameters": 3426,
+            "total_parameters": 3591,
         },
         {
             "experiment_id": "E03_GRU_32_MEAN",
+            "val_macro_f1_mean": 0.940,
             "val_balanced_accuracy_mean": 0.940,
-            "total_parameters": 3426,
+            "total_parameters": 3591,
         },
         {
             "experiment_id": "E04_GRU_32_MAX",
+            "val_macro_f1_mean": 0.920,
             "val_balanced_accuracy_mean": 0.920,
-            "total_parameters": 3426,
+            "total_parameters": 3591,
         },
         {
             "experiment_id": "E05_GRU_32_MEAN_MAX",
+            "val_macro_f1_mean": 0.950,
             "val_balanced_accuracy_mean": 0.950,
-            "total_parameters": 3490,
+            "total_parameters": 3815,
         },
     ]
 
@@ -83,16 +91,18 @@ def test_final_model_selection(tmp_path: Path) -> None:
         {
             "experiment_id": "E01_MLP_32",
             "phase": 1,
+            "val_macro_f1_mean": 0.87,
             "val_balanced_accuracy_mean": 0.88,
             "val_f1_mean": 0.87,
-            "total_parameters": 4578,
+            "total_parameters": 3335,
         },
         {
             "experiment_id": "E07_GRU_64_BEST_POOLING",
             "phase": 4,
+            "val_macro_f1_mean": 0.95,
             "val_balanced_accuracy_mean": 0.96,
             "val_f1_mean": 0.95,
-            "total_parameters": 12994,
+            "total_parameters": 13319,
         },
     ]
 

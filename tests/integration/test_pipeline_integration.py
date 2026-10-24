@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from project4_rnn.config import build_experiment_config
+from project4_rnn.data.preprocessing import map_official_to_internal_labels
 from project4_rnn.experiments.runner import run_single_seed
 
 
@@ -16,13 +17,12 @@ def test_single_seed_run_artifacts_creation(
 ) -> None:
     """Verify that executing a single seed generates all required artifact files."""
     X_dev, y_dev_orig = synthetic_dev_data
-    from project4_rnn.data.preprocessing import binarize_labels
 
-    y_dev_bin = binarize_labels(y_dev_orig)
-    X_train = X_dev[:400]
-    y_train = y_dev_bin[:400]
-    X_val = X_dev[400:500]
-    y_val = y_dev_bin[400:500]
+    y_dev_mapped = map_official_to_internal_labels(y_dev_orig)
+    X_train = X_dev[:100]
+    y_train = y_dev_mapped[:100]
+    X_val = X_dev[100:140]
+    y_val = y_dev_mapped[100:140]
 
     cfg = build_experiment_config(
         base_config_path=Path("configs/base.yaml"),
@@ -38,7 +38,7 @@ def test_single_seed_run_artifacts_creation(
         y_train=y_train,
         X_val=X_val,
         y_val=y_val,
-        val_indices=np.arange(400, 500),
+        val_indices=np.arange(100, 140),
         artifacts_dir=temp_artifacts_dir,
         force=True,
     )
@@ -58,7 +58,8 @@ def test_single_seed_run_artifacts_creation(
     assert (run_dir / "probabilities_validation.csv").is_file()
     assert (run_dir / "best_checkpoint.pt").is_file()
     assert (run_dir / "training_curves.png").is_file()
-    assert (run_dir / "validation_confusion_matrix.png").is_file()
+    assert (run_dir / "validation_confusion_matrix_raw.png").is_file()
+    assert (run_dir / "validation_confusion_matrix_normalized.png").is_file()
     assert (run_dir / "execution_metadata.json").is_file()
 
     # Re-running with force=False should trigger SKIP

@@ -2,60 +2,80 @@
 
 from typing import Final
 
-# Dataset specifications
-DATASET_NAME: Final[str] = "ECG5000"
-SEQUENCE_LENGTH: Final[int] = 140
+# Dataset specifications for ElectricDevices benchmark
+DATASET_NAME: Final[str] = "ElectricDevices"
+DATASET_VARIANT: Final[str] = "UCR_UEA_benchmark"
+DATASET_SOURCE: Final[str] = "UCR_UEA_Time_Series_Classification_Archive"
+SEQUENCE_LENGTH: Final[int] = 96
 NUM_FEATURES: Final[int] = 1
-NUM_CLASSES: Final[int] = 2
+NUM_CLASSES: Final[int] = 7
 
 # Official split sizes
-OFFICIAL_DEV_SAMPLES: Final[int] = 500
-OFFICIAL_TEST_SAMPLES: Final[int] = 4500
-TOTAL_SAMPLES: Final[int] = 5000
+OFFICIAL_TRAIN_SAMPLES: Final[int] = 8926
+OFFICIAL_TEST_SAMPLES: Final[int] = 7711
+TOTAL_SAMPLES: Final[int] = 16637
 
-# Development split specification
+# Official file names and MD5 checksums
+TRAIN_FILE_NAME: Final[str] = "ElectricDevices_TRAIN.ts"
+TEST_FILE_NAME: Final[str] = "ElectricDevices_TEST.ts"
+TRAIN_MD5: Final[str] = "8d3995f89026af26a56b3841fdb10f12"
+TEST_MD5: Final[str] = "7fc54f2fb8bedc88ee4ebbadd0e47c40"
+
+# Official class labels (1 to 7) mapped to contiguous 0-indexed internal labels (0 to 6)
+OFFICIAL_CLASSES: Final[tuple[int, ...]] = (1, 2, 3, 4, 5, 6, 7)
+OFFICIAL_TO_INTERNAL_LABEL: Final[dict[int, int]] = {
+    1: 0,
+    2: 1,
+    3: 2,
+    4: 3,
+    5: 4,
+    6: 5,
+    7: 6,
+}
+INTERNAL_TO_OFFICIAL_LABEL: Final[dict[int, int]] = {
+    0: 1,
+    1: 2,
+    2: 3,
+    3: 4,
+    4: 5,
+    5: 6,
+    6: 7,
+}
+
+# Training/Validation split specification on official train partition (approx 80% / 20%)
 SPLIT_SEED: Final[int] = 42
-TRAIN_SAMPLES: Final[int] = 400
-VAL_SAMPLES: Final[int] = 100
+VAL_SPLIT_RATIO: Final[float] = 0.20
 
-# Training seeds
+# Training seeds (5 seeds x 8 configs = 40 training runs)
 TRAIN_SEEDS: Final[list[int]] = [7, 21, 42, 84, 168]
 
-# Binary label adaptation
-# Original 1 -> Binary 0 (Negative class)
-# Original 2, 3, 4, 5 -> Binary 1 (Positive class)
-ORIGINAL_NEGATIVE_CLASSES: Final[tuple[int, ...]] = (1,)
-ORIGINAL_POSITIVE_CLASSES: Final[tuple[int, ...]] = (2, 3, 4, 5)
-LABEL_NEGATIVE: Final[int] = 0
-LABEL_POSITIVE: Final[int] = 1
-
-# Parsimony threshold for pooling selection (0.5 percentage points = 0.005)
+# Parsimony threshold for pooling and model selection (0.5 percentage points = 0.005 Macro F1)
 PARSIMONY_THRESHOLD: Final[float] = 0.005
 
-# Expected parameter counts for architectures
+# Expected parameter counts for architectures on ElectricDevices (input 96, 7 classes)
 EXPECTED_PARAMETERS: Final[dict[str, int | dict[str, int]]] = {
-    "E01_MLP_32": 4578,
-    "E02_GRU_32_LAST": 3426,
-    "E03_GRU_32_MEAN": 3426,
-    "E04_GRU_32_MAX": 3426,
-    "E05_GRU_32_MEAN_MAX": 3490,
+    "E01_MLP_32": 3335,
+    "E02_GRU_32_LAST": 3591,
+    "E03_GRU_32_MEAN": 3591,
+    "E04_GRU_32_MAX": 3591,
+    "E05_GRU_32_MEAN_MAX": 3815,
     "E06_LSTM_32_BEST_POOLING": {
-        "last": 4546,
-        "mean": 4546,
-        "max": 4546,
-        "mean_max": 4610,
+        "last": 4711,
+        "mean": 4711,
+        "max": 4711,
+        "mean_max": 4935,
     },
     "E07_GRU_64_BEST_POOLING": {
-        "last": 12994,
-        "mean": 12994,
-        "max": 12994,
-        "mean_max": 13122,
+        "last": 13319,
+        "mean": 13319,
+        "max": 13319,
+        "mean_max": 13767,
     },
     "E08_LSTM_64_BEST_POOLING": {
-        "last": 17282,
-        "mean": 17282,
-        "max": 17282,
-        "mean_max": 17410,
+        "last": 17607,
+        "mean": 17607,
+        "max": 17607,
+        "mean_max": 18055,
     },
 }
 

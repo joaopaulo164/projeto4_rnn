@@ -1,4 +1,4 @@
-"""Phase-level execution workflows (Phases 1 to 4 and Final Evaluation)."""
+"""Phase-level execution workflows (Phases 1 to 4 and Final Evaluation) for ElectricDevices."""
 
 import json
 import logging
@@ -6,14 +6,18 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from project4_rnn.audit.compliance import ComplianceAuditor
 from project4_rnn.audit.report import generate_audit_report
 from project4_rnn.config import build_experiment_config
 from project4_rnn.data.dataset import create_dataloaders
-from project4_rnn.data.download import download_ecg5000
-from project4_rnn.data.loader import load_raw_ecg5000
-from project4_rnn.data.preprocessing import binarize_labels, fit_and_apply_scaler
+from project4_rnn.data.download import download_electricdevices
+from project4_rnn.data.loader import load_raw_electricdevices
+from project4_rnn.data.preprocessing import (
+    fit_and_apply_scaler,
+    map_official_to_internal_labels,
+)
 from project4_rnn.data.splitting import create_or_load_split
 from project4_rnn.data.validation import (
     save_dataset_manifest,
@@ -22,7 +26,6 @@ from project4_rnn.data.validation import (
 from project4_rnn.evaluation.plots import (
     plot_class_distribution,
     plot_confusion_matrix,
-    plot_roc_and_pr_curves,
     plot_time_series_samples,
 )
 from project4_rnn.evaluation.predictions import save_prediction_artifacts
@@ -45,9 +48,24 @@ def prepare_and_load_data(
     base_config_path: Path = Path("configs/base.yaml"),
     force: bool = False,
 ) -> tuple[
-    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    dict[str, Any],
 ]:
-    """Acquire, preprocess, split, and validate dataset partitions according to protocol."""
+    """Acquire, load, split, and validate ElectricDevices dataset partitions.
+
+    Args:
+        base_config_path: Path to configs/base.yaml.
+        force: If True, forces redownload and recreate of split.
+
+    Returns:
+        Tuple of (X_train, y_train_mapped, X_val, y_val_mapped, X_test, y_test_mapped, val_idx, val_report).
+    """
     base_cfg = build_experiment_config(base_config_path)
 
     raw_dir = Path(base_cfg.data.raw_dir)
@@ -55,30 +73,36 @@ def prepare_and_load_data(
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Acquire raw data
-    download_ecg5000(raw_dir=raw_dir)
+    download_electricdevices(raw_dir=raw_dir)
 
-    # 2. Load raw files
-    X_dev_raw, y_dev_raw, X_test_raw, y_test_raw = load_raw_ecg5000(raw_dir=raw_dir)
+    # 2. Load raw files with integrated contract validation
+    X_train_raw, y_train_raw, X_test_raw, y_test_raw, manifest_dict = load_raw_electricdevices(
+        raw_dir=raw_dir,
+        verify_checksums=True,
+        processed_dir=processed_dir,
+    )
 
-    # 3. Binarize labels
-    y_dev_bin = binarize_labels(y_dev_raw)
-    y_test_bin = binarize_labels(y_test_raw)
-
-    # 4. Create or load fixed stratified split
+    # 3. Create or load fixed stratified split on official train (8,926 samples)
     split_indices_path = processed_dir / "split_indices.json"
     train_idx, val_idx = create_or_load_split(
-        y_dev=y_dev_bin,
+        y_train_official=y_train_raw,
         split_indices_path=split_indices_path,
         seed=base_cfg.data.split_seed,
+        val_ratio=base_cfg.data.val_split_ratio,
         force_recreate=force,
     )
 
-    X_train = X_dev_raw[train_idx]
-    y_train = y_dev_bin[train_idx]
-    X_val = X_dev_raw[val_idx]
-    y_val = y_dev_bin[val_idx]
+    X_train = X_train_raw[train_idx]
+    y_train_orig = y_train_raw[train_idx]
+    X_val = X_train_raw[val_idx]
+    y_val_orig = y_train_raw[val_idx]
     X_test = X_test_raw
-    y_test = y_test_bin
+    y_test_orig = y_test_raw
+
+    # 4. Map official labels (1..7) to internal indices (0..6)
+    y_train = map_official_to_internal_labels(y_train_orig)
+    y_val = map_official_to_internal_labels(y_val_orig)
+    y_test = map_official_to_internal_labels(y_test_orig)
 
     # 5. Optional normalization strictly fitted on train
     if base_cfg.data.normalization.get("enabled", False):
@@ -87,35 +111,37 @@ def prepare_and_load_data(
             X_train, X_val, X_test, scaler_type=scaler_type
         )
 
-    # 6. Validate partitions and save manifest
+    # 6. Validate partitions and update manifest
     val_report = validate_dataset_arrays(
         X_train=X_train,
-        y_train=y_train,
+        y_train=y_train_orig,
         X_val=X_val,
-        y_val=y_val,
+        y_val=y_val_orig,
         X_test=X_test,
-        y_test=y_test,
+        y_test=y_test_orig,
+        expected_train_count=len(train_idx),
+        expected_val_count=len(val_idx),
+        expected_test_count=len(y_test_orig),
     )
+    manifest_dict["validation_report"] = val_report
     manifest_path = processed_dir / "dataset_manifest.json"
-    save_dataset_manifest(val_report, manifest_path)
+    save_dataset_manifest(manifest_dict, manifest_path)
 
     # Save data distribution and time series exploratory plots
     figures_dir = Path("artifacts/summary/figures")
     figures_dir.mkdir(parents=True, exist_ok=True)
     plot_class_distribution(
-        y_dev_orig=y_dev_raw,
-        y_test_orig=y_test_raw,
-        y_dev_bin=y_dev_bin,
-        y_test_bin=y_test_bin,
+        y_train=y_train_orig,
+        y_val=y_val_orig,
+        y_test=y_test_orig,
         output_path=figures_dir / "class_distribution.png",
     )
     plot_time_series_samples(
         X=X_train,
-        y_bin=y_train,
+        y=y_train_orig,
         output_path=figures_dir / "time_series_samples.png",
     )
 
-    y_dev_raw[val_idx]
     return X_train, y_train, X_val, y_val, X_test, y_test, val_idx, val_report
 
 
@@ -357,9 +383,9 @@ def run_final_evaluation(
     test_metrics, test_preds, test_probs, inf_time = trainer.evaluate(test_loader)
 
     logger.info(
-        f"Final Official Test Set Results (4500 samples) | "
-        f"Bal Acc: {test_metrics['balanced_accuracy']:.4f} | F1: {test_metrics['f1']:.4f} | "
-        f"Acc: {test_metrics['accuracy']:.4f} | ROC-AUC: {test_metrics.get('roc_auc')}"
+        f"Final Official Test Set Results (7,711 samples) | "
+        f"Macro F1: {test_metrics['macro_f1']:.4f} | Bal Acc: {test_metrics['balanced_accuracy']:.4f} | "
+        f"Acc: {test_metrics['accuracy']:.4f}"
     )
 
     # 7. Persist Test Artifacts
@@ -367,11 +393,17 @@ def run_final_evaluation(
     with open(test_metrics_path, "w", encoding="utf-8") as f:
         json.dump(test_metrics, f, indent=2)
 
+    # Save per-class metrics
+    per_class_dict = test_metrics.get("per_class_metrics", {})
+    if per_class_dict:
+        class_df = pd.DataFrame(per_class_dict).T
+        class_df.to_csv(summary_dir / "final_test_metrics_by_class.csv")
+
     save_prediction_artifacts(
         predictions_csv_path=summary_dir / "final_test_predictions.csv",
         probabilities_csv_path=summary_dir / "final_test_probabilities.csv",
         sample_indices=np.arange(len(y_test)),
-        y_binary=y_test,
+        y_true=y_test,
         y_pred=test_preds,
         y_prob=test_probs,
         experiment_id=winning_exp_id,
@@ -384,14 +416,16 @@ def run_final_evaluation(
     plot_confusion_matrix(
         y_true=y_test,
         y_pred=test_preds,
-        output_path=figures_dir / "final_test_confusion_matrix.png",
-        title=f"Official Test Confusion Matrix ({winning_exp_id})",
+        output_path=figures_dir / "final_test_confusion_matrix_raw.png",
+        title=f"Official Test Confusion Matrix Raw ({winning_exp_id})",
+        normalize=False,
     )
-    plot_roc_and_pr_curves(
+    plot_confusion_matrix(
         y_true=y_test,
-        y_prob=test_probs,
-        output_path=figures_dir / "final_test_roc_pr_curves.png",
-        title_suffix=f"({winning_exp_id} - Test Set)",
+        y_pred=test_preds,
+        output_path=figures_dir / "final_test_confusion_matrix_normalized.png",
+        title=f"Official Test Confusion Matrix Normalized ({winning_exp_id})",
+        normalize=True,
     )
 
     # Re-run consolidation to update evidence catalog
