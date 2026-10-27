@@ -2,11 +2,14 @@
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from project4_rnn.constants import PARSIMONY_THRESHOLD
+from project4_rnn.experiments.pooling_selection import REQUIRED_SUMMARY_FIELDS
+from project4_rnn.experiments.timing import IncompleteRunError, find_numeric_problems
 from project4_rnn.reproducibility import compute_object_hash
 
 logger = logging.getLogger("project4_rnn.experiments.model_selection")
@@ -15,8 +18,10 @@ logger = logging.getLogger("project4_rnn.experiments.model_selection")
 def select_final_model(
     all_summaries: list[dict[str, Any]],
     output_path: Path,
+    dataset_hash: str,
+    split_hash: str,
     parsimony_threshold: float = PARSIMONY_THRESHOLD,
-    data_hash: str | None = None,
+    provenance_builder: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Select winning architecture across all 8 configurations strictly on validation set.
 
@@ -31,38 +36,49 @@ def select_final_model(
     Args:
         all_summaries: List of summary dicts for all completed experiments.
         output_path: Destination path for final_model_selection.json.
+        dataset_hash: Identity hash of the dataset the runs used.
+        split_hash: Identity hash of the train/validation split the runs used.
         parsimony_threshold: Parsimony margin (default 0.005 = 0.5% Macro F1).
-        data_hash: Processed dataset SHA-256 hash.
+        provenance_builder: Optional callable receiving the selected experiment id and returning
+            the provenance block (seed, checkpoint, SHA-256, config, hashes, timestamp) that is
+            merged into the persisted document.
 
     Returns:
         Dictionary containing winning model selection and ranking.
 
     Raises:
         ValueError: If no summaries are provided.
+        IncompleteRunError: If a summary lacks a required field (never defaulted to zero).
     """
     if not all_summaries:
         raise ValueError("Cannot select final model: empty summaries list.")
 
+    problems = []
     candidates: list[dict[str, Any]] = []
     for s in all_summaries:
         exp_id = s["experiment_id"]
-        macro_f1_mean = float(s.get("val_macro_f1_mean", s.get("val_f1_mean", 0.0)))
-        macro_f1_std = float(s.get("val_macro_f1_std", s.get("val_f1_std", 0.0)))
+        problems.extend(find_numeric_problems(s, exp_id, ("phase", *REQUIRED_SUMMARY_FIELDS), True))
+        if problems:
+            continue
+        macro_f1_mean = float(s["val_macro_f1_mean"])
+        macro_f1_std = float(s["val_macro_f1_std"])
         candidates.append(
             {
                 "experiment_id": exp_id,
-                "phase": int(s.get("phase", 0)),
+                "phase": int(s["phase"]),
                 "val_macro_f1_mean": macro_f1_mean,
                 "val_macro_f1_std": macro_f1_std,
                 "val_f1_mean": macro_f1_mean,
                 "val_f1_std": macro_f1_std,
-                "val_balanced_accuracy_mean": float(s.get("val_balanced_accuracy_mean", 0.0)),
-                "val_balanced_accuracy_std": float(s.get("val_balanced_accuracy_std", 0.0)),
-                "val_loss_mean": float(s.get("val_loss_mean", 0.0)),
-                "mean_training_time_sec": float(s.get("total_training_time_sec_mean", 0.0)),
-                "total_parameters": int(s.get("total_parameters", 0)),
+                "val_balanced_accuracy_mean": float(s["val_balanced_accuracy_mean"]),
+                "val_balanced_accuracy_std": float(s["val_balanced_accuracy_std"]),
+                "val_loss_mean": float(s["val_loss_mean"]),
+                "mean_training_time_sec": float(s["total_training_time_sec_mean"]),
+                "total_parameters": int(s["total_parameters"]),
             }
         )
+    if problems:
+        raise IncompleteRunError(problems)
 
     # Sort strictly by:
     # 1. -val_macro_f1_mean
@@ -118,8 +134,12 @@ def select_final_model(
         "selected_experiment_id": selected_candidate["experiment_id"],
         "selected_candidate_metrics": selected_candidate,
         "all_candidates_ranking": ranked,
-        "data_hash": data_hash or "",
+        "dataset_hash": dataset_hash,
+        "split_hash": split_hash,
     }
+    if provenance_builder is not None:
+        provenance = provenance_builder(str(selected_candidate["experiment_id"]))
+        selection_payload.update(provenance)
     selection_payload["selection_hash"] = compute_object_hash(selection_payload)
 
     output_path = Path(output_path)

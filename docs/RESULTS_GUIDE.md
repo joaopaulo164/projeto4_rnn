@@ -1,17 +1,46 @@
-# Guia de Análise dos Resultados e Interpretação
+# Guia de Resultados
 
-## 1. Como Inspecionar os Resultados
+> O experimento completo **não foi executado** nesta etapa. **Não existem resultados científicos nesta versão do repositório.** Métricas de fixture ou do smoke test são verificações técnicas e jamais devem ser citadas como resultados.
 
-1. **Ranking Geral**: Consulte `artifacts/summary/validation_ranking.csv` para ver o ordenamento das arquiteturas por Balanced Accuracy.
-2. **Ablação de Pooling**: Consulte `artifacts/summary/pooling_selection.json` e `artifacts/summary/figures/phase2_pooling_ablation.png`.
-3. **Estabilidade das Sementes**: Inspecione o boxplot `artifacts/summary/figures/seed_stability_boxplot.png`.
-4. **Eficiência Paramétrica**: Consulte `artifacts/summary/figures/accuracy_vs_parameters.png` e `artifacts/summary/figures/performance_vs_time.png`.
-5. **Avaliação no Teste**: Consulte `artifacts/summary/final_test_metrics.json` e as figuras de matriz de confusão e ROC em `artifacts/summary/figures/`.
+## 1. Avaliações previstas no teste oficial (execução futura)
 
-## 2. Resposta às Questões de Pesquisa (RQs)
+| Avaliação | Conjunto | Papel |
+|---|---|---|
+| Teste oficial completo | 7.711 amostras | **resultado principal** do modelo congelado |
+| Sem sobreposição exata | teste sem séries cujo hash aparece no desenvolvimento oficial (treino + validação) | sensibilidade descritiva |
+| Sem grupos conflitantes | teste sem hashes com rótulos diferentes | sensibilidade descritiva |
 
-- **RQ1 (Recorrência vs MLP)**: Verifique se o melhor modelo GRU-32 supera a acurácia balanceada e F1 da MLP-32, e se a estrutura temporal explícita compensa os parâmetros.
-- **RQ2 (Estratégia de Pooling)**: Compare o ganho do pooling temporal em relação ao último estado oculto.
-- **RQ3 (GRU-32 vs LSTM-32)**: Compare o comportamento das duas células sob a mesma capacidade oculta.
-- **RQ4 e RQ5 (Aumento de Capacidade 32 -> 64)**: Verifique se o aumento de parâmetros para 64 unidades produz ganho estatisticamente consistente.
-- **RQ6 (Custo-Benefício)**: Analise a fronteira de eficiência considerando tempo por época e complexidade paramétrica.
+As análises de sensibilidade nunca participam da seleção de pooling, arquitetura ou semente. O teste oficial permanece intacto; os filtros apenas selecionam linhas e não alteram rótulos.
+
+## 2. Como ler os artefatos
+
+1. `artifacts/summary/validation_ranking.csv`: ranking de validação (critério: F1 macro, com regra de parcimônia de 0,5 p.p.).
+2. `pooling_selection.json` e `final_model_selection.json`: decisões, com semente, checkpoint, SHA-256, `dataset_hash` e `split_hash`.
+3. `final_test_metrics.json` (+ `_by_class.csv`, predições e probabilidades): desempenho único no teste.
+4. `final_evaluation_sensitivity_comparison.csv|md`: lado a lado das três avaliações, com o número de amostras removidas.
+5. `experiments_summary.csv`: média, desvio-padrão, mínimo e máximo por configuração, incluindo tempos.
+6. `consolidation_status.json`: deve ser `COMPLETE`.
+
+## 3. Interpretação
+
+- Diferença grande entre o teste completo e “sem sobreposição exata” indica contribuição de séries repetidas entre desenvolvimento e teste (57 grupos compartilhados, 208 amostras de teste no desenvolvimento completo).
+- As cinco sementes medem a estabilidade da otimização; não são replicações independentes de amostragem de dados.
+- O teste é único; não há intervalo de confiança de reamostragem do teste, salvo se gerado pelo módulo de estatística e declarado como tal.
+- Entradas idênticas com rótulos distintos impõem um teto de acurácia que nenhum modelo supera.
+
+## 4. Valores de referência da auditoria (dados, não resultados)
+
+Auditoria de duplicatas já executada (sem treinamento): 16.637 amostras, 16.160 séries únicas, 477 excessos, 136 grupos duplicados, 54 grupos com rótulos conflitantes; treino × validação do split novo: 0 hashes compartilhados.
+
+## 5. PRÓXIMA EXECUÇÃO EXPERIMENTAL
+
+Para execução posterior pelo usuário (**não executados** aqui):
+
+```powershell
+python -m project4_rnn.cli clean-artifacts --generated-only
+
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --fail-fast
+
+# em caso de interrupção
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --resume --fail-fast
+```

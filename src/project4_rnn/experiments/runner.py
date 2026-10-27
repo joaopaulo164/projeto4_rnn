@@ -20,9 +20,11 @@ from project4_rnn.evaluation.plots import (
     plot_training_curves,
 )
 from project4_rnn.evaluation.predictions import save_prediction_artifacts
+from project4_rnn.experiments.timing import validate_timing_fields
 from project4_rnn.logging_config import setup_logger
 from project4_rnn.models.factory import build_model
 from project4_rnn.reproducibility import (
+    compute_file_hash,
     get_environment_info,
     set_seed,
 )
@@ -56,8 +58,13 @@ REQUIRED_RUN_ARTIFACTS = [
 def check_run_status(
     run_dir: Path,
     expected_config_hash: str,
+    expected_split_hash: str,
+    expected_dataset_hash: str | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Check whether a specific seed run is completed, invalid, or pending.
+
+    A run is reusable only when its configuration hash, split hash (and dataset hash, when given)
+    equal the expected ones. Runs produced with another split are therefore never reused.
 
     Returns:
         Tuple of (status_code, existing_summary_dict) where status_code is 'SKIP', 'RERUN', or 'PENDING'.
@@ -83,17 +90,36 @@ def check_run_status(
     try:
         with open(status_file, encoding="utf-8") as f:
             status_data = json.load(f)
-        if status_data.get("status") == "COMPLETED":
-            metadata_file = run_dir / "execution_metadata.json"
-            summary = None
-            if metadata_file.is_file():
-                with open(metadata_file, encoding="utf-8") as mf:
-                    summary = json.load(mf)
-            return "SKIP", summary
-    except Exception as status_err:
+    except (OSError, json.JSONDecodeError) as status_err:
         logger.debug(f"Could not read existing run status in {run_dir}: {status_err}")
+        return "RERUN", None
 
-    return "RERUN", None
+    if status_data.get("status") != "COMPLETED":
+        return "RERUN", None
+    if status_data.get("split_hash") != expected_split_hash:
+        return "RERUN", None
+    if (
+        expected_dataset_hash is not None
+        and status_data.get("dataset_hash") != expected_dataset_hash
+    ):
+        return "RERUN", None
+
+    try:
+        with open(run_dir / "execution_metadata.json", encoding="utf-8") as mf:
+            summary: dict[str, Any] = json.load(mf)
+    except (OSError, json.JSONDecodeError) as meta_err:
+        logger.debug(f"Could not read execution metadata in {run_dir}: {meta_err}")
+        return "RERUN", None
+    return "SKIP", summary
+
+
+def _close_run_logger(name: str) -> None:
+    """Close and detach the per-run file handlers so run.log is released (required on Windows)."""
+    run_logger = logging.getLogger(name)
+    for handler in list(run_logger.handlers):
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            run_logger.removeHandler(handler)
 
 
 def run_single_seed(
@@ -104,6 +130,40 @@ def run_single_seed(
     X_val: np.ndarray,
     y_val: np.ndarray,
     val_indices: np.ndarray,
+    dataset_hash: str,
+    split_hash: str,
+    artifacts_dir: Path = Path("artifacts"),
+    force: bool = False,
+) -> dict[str, Any]:
+    """Run one seed (see :func:`_execute_seed`) and always release the run log file."""
+    try:
+        return _execute_seed(
+            config,
+            seed,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            val_indices,
+            dataset_hash,
+            split_hash,
+            artifacts_dir,
+            force,
+        )
+    finally:
+        _close_run_logger(f"{config.experiment_id}_{seed}")
+
+
+def _execute_seed(
+    config: ExperimentConfig,
+    seed: int,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    val_indices: np.ndarray,
+    dataset_hash: str,
+    split_hash: str,
     artifacts_dir: Path = Path("artifacts"),
     force: bool = False,
 ) -> dict[str, Any]:
@@ -117,6 +177,8 @@ def run_single_seed(
         X_val: Validation features.
         y_val: Validation mapped labels (0..6).
         val_indices: Original indices of validation samples in development partition.
+        dataset_hash: Identity hash of the dataset the run was trained on.
+        split_hash: Identity hash of the train/validation split the run was trained on.
         artifacts_dir: Root directory for artifacts.
         force: If True, forces execution even if completed artifacts exist.
 
@@ -127,7 +189,9 @@ def run_single_seed(
     config_hash = config.compute_hash()
 
     if not force:
-        status_code, existing_summary = check_run_status(run_dir, config_hash)
+        status_code, existing_summary = check_run_status(
+            run_dir, config_hash, split_hash, dataset_hash
+        )
         if status_code == "SKIP" and existing_summary is not None:
             logger.info(f"Skipping completed run for {config.experiment_id} (Seed {seed}) [SKIP]")
             return existing_summary
@@ -174,6 +238,9 @@ def run_single_seed(
 
     split_summary = {
         "split_seed": config.data.split_seed,
+        "split_method": config.data.split_method,
+        "split_hash": split_hash,
+        "dataset_hash": dataset_hash,
         "val_indices_count": len(val_indices),
         "val_indices": val_indices.tolist(),
     }
@@ -277,7 +344,10 @@ def run_single_seed(
     end_timestamp = datetime.now(UTC)
     duration = (end_timestamp - start_timestamp).total_seconds()
 
-    # 11. Execution metadata
+    # 11. Execution metadata (timing fields are copied from the trainer summary and validated;
+    #     a missing or invalid timing raises instead of being replaced by zero)
+    timings = validate_timing_fields(run_summary, f"{config.experiment_id}/seed_{seed}")
+    checkpoint_path = run_dir / "best_checkpoint.pt"
     exec_metadata = {
         "experiment_id": config.experiment_id,
         "phase": config.phase,
@@ -285,6 +355,9 @@ def run_single_seed(
         "start_time": start_timestamp.isoformat(),
         "end_time": end_timestamp.isoformat(),
         "total_duration_sec": duration,
+        "total_training_time_sec": timings["total_training_time_sec"],
+        "mean_epoch_time_sec": timings["mean_epoch_time_sec"],
+        "inference_time_sec": timings["inference_time_sec"],
         "best_epoch": run_summary["best_epoch"],
         "total_epochs": run_summary["total_epochs"],
         "best_val_loss": run_summary["best_val_loss"],
@@ -292,6 +365,10 @@ def run_single_seed(
         "trainable_parameters": model.count_trainable_parameters(),
         "validation_metrics": val_metrics,
         "config_hash": config_hash,
+        "dataset_hash": dataset_hash,
+        "split_hash": split_hash,
+        "checkpoint": str(checkpoint_path),
+        "checkpoint_sha256": compute_file_hash(checkpoint_path, "sha256"),
     }
     with open(run_dir / "execution_metadata.json", "w", encoding="utf-8") as f:
         json.dump(exec_metadata, f, indent=2)
@@ -301,6 +378,8 @@ def run_single_seed(
         "status": "COMPLETED",
         "timestamp": end_timestamp.isoformat(),
         "config_hash": config_hash,
+        "dataset_hash": dataset_hash,
+        "split_hash": split_hash,
     }
     with open(run_dir / "status.json", "w", encoding="utf-8") as f:
         json.dump(status_payload, f, indent=2)
@@ -319,6 +398,8 @@ def run_experiment_all_seeds(
     X_val: np.ndarray,
     y_val: np.ndarray,
     val_indices: np.ndarray,
+    dataset_hash: str,
+    split_hash: str,
     artifacts_dir: Path = Path("artifacts"),
     force: bool = False,
 ) -> list[dict[str, Any]]:
@@ -331,6 +412,8 @@ def run_experiment_all_seeds(
         X_val: Validation features array.
         y_val: Validation mapped labels array (0..6).
         val_indices: Validation sample index array.
+        dataset_hash: Identity hash of the dataset.
+        split_hash: Identity hash of the train/validation split.
         artifacts_dir: Artifacts root directory.
         force: Force re-execution.
 
@@ -349,6 +432,8 @@ def run_experiment_all_seeds(
             X_val=X_val,
             y_val=y_val,
             val_indices=val_indices,
+            dataset_hash=dataset_hash,
+            split_hash=split_hash,
             artifacts_dir=artifacts_dir,
             force=force,
         )

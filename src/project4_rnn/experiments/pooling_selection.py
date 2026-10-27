@@ -7,16 +7,29 @@ from pathlib import Path
 from typing import Any
 
 from project4_rnn.constants import PARSIMONY_THRESHOLD
+from project4_rnn.experiments.provenance import check_identity
+from project4_rnn.experiments.timing import IncompleteRunError, find_numeric_problems
 from project4_rnn.reproducibility import compute_object_hash
 
 logger = logging.getLogger("project4_rnn.experiments.pooling_selection")
+
+REQUIRED_SUMMARY_FIELDS: tuple[str, ...] = (
+    "val_macro_f1_mean",
+    "val_macro_f1_std",
+    "val_balanced_accuracy_mean",
+    "val_balanced_accuracy_std",
+    "val_loss_mean",
+    "total_training_time_sec_mean",
+    "total_parameters",
+)
 
 
 def select_best_pooling(
     phase2_summaries: list[dict[str, Any]],
     output_path: Path,
+    dataset_hash: str,
+    split_hash: str,
     parsimony_threshold: float = PARSIMONY_THRESHOLD,
-    data_hash: str | None = None,
 ) -> dict[str, Any]:
     """Execute pre-defined decision rule to select winning temporal pooling strategy from Phase 2.
 
@@ -31,14 +44,16 @@ def select_best_pooling(
     Args:
         phase2_summaries: List of summary dictionaries for Phase 2 experiments (E02-E05).
         output_path: Target path for pooling_selection.json.
+        dataset_hash: Identity hash of the dataset the Phase 2 runs used.
+        split_hash: Identity hash of the train/validation split the Phase 2 runs used.
         parsimony_threshold: Parsimony margin (default 0.005 = 0.5% Macro F1).
-        data_hash: Optional SHA-256 hash of processed dataset.
 
     Returns:
         Dictionary containing the full selection rationale, ranking, and chosen pooling.
 
     Raises:
-        ValueError: If phase2_summaries is empty or missing required candidate data.
+        ValueError: If phase2_summaries is empty or has no Phase 2 candidates.
+        IncompleteRunError: If a candidate summary lacks a required field (never defaulted).
     """
     if not phase2_summaries:
         raise ValueError("Cannot select pooling: no Phase 2 experiment summaries provided.")
@@ -51,13 +66,17 @@ def select_best_pooling(
         "E05_GRU_32_MEAN_MAX": "mean_max",
     }
 
+    problems = []
     for s in phase2_summaries:
         exp_id = s["experiment_id"]
         if exp_id not in pooling_map:
             continue
+        problems.extend(find_numeric_problems(s, exp_id, REQUIRED_SUMMARY_FIELDS, True))
+        if problems:
+            continue
         pooling_strat = pooling_map[exp_id]
-        macro_f1_mean = float(s.get("val_macro_f1_mean", s.get("val_f1_mean", 0.0)))
-        macro_f1_std = float(s.get("val_macro_f1_std", s.get("val_f1_std", 0.0)))
+        macro_f1_mean = float(s["val_macro_f1_mean"])
+        macro_f1_std = float(s["val_macro_f1_std"])
         cand = {
             "experiment_id": exp_id,
             "pooling_strategy": pooling_strat,
@@ -65,14 +84,15 @@ def select_best_pooling(
             "val_macro_f1_std": macro_f1_std,
             "val_f1_mean": macro_f1_mean,
             "val_f1_std": macro_f1_std,
-            "val_balanced_accuracy_mean": float(s.get("val_balanced_accuracy_mean", 0.0)),
-            "val_balanced_accuracy_std": float(s.get("val_balanced_accuracy_std", 0.0)),
-            "val_loss_mean": float(s.get("val_loss_mean", 0.0)),
-            "mean_training_time_sec": float(s.get("total_training_time_sec_mean", 0.0)),
-            "total_parameters": int(s.get("total_parameters", 3591)),
-            "is_parsimonious": (s.get("total_parameters", 3591) == 3591),
+            "val_balanced_accuracy_mean": float(s["val_balanced_accuracy_mean"]),
+            "val_balanced_accuracy_std": float(s["val_balanced_accuracy_std"]),
+            "val_loss_mean": float(s["val_loss_mean"]),
+            "mean_training_time_sec": float(s["total_training_time_sec_mean"]),
+            "total_parameters": int(s["total_parameters"]),
         }
         candidates.append(cand)
+    if problems:
+        raise IncompleteRunError(problems)
 
     if not candidates:
         raise ValueError("No valid Phase 2 candidate experiments found in summaries.")
@@ -134,7 +154,8 @@ def select_best_pooling(
         "selected_pooling": selected_candidate["pooling_strategy"],
         "selected_candidate_metrics": selected_candidate,
         "all_candidates_ranking": sorted_candidates,
-        "data_hash": data_hash or "",
+        "dataset_hash": dataset_hash,
+        "split_hash": split_hash,
     }
     selection_payload["selection_hash"] = compute_object_hash(selection_payload)
 
@@ -147,17 +168,24 @@ def select_best_pooling(
     return selection_payload
 
 
-def load_selected_pooling(selection_path: Path) -> str:
+def load_selected_pooling(
+    selection_path: Path,
+    expected_split_hash: str | None = None,
+    expected_dataset_hash: str | None = None,
+) -> str:
     """Load previously selected pooling strategy from JSON file.
 
     Args:
         selection_path: Path to pooling_selection.json.
+        expected_split_hash: When given, the selection must have been made on this split.
+        expected_dataset_hash: When given, the selection must have been made on this dataset.
 
     Returns:
         Selected pooling string ('last', 'mean', 'max', 'mean_max').
 
     Raises:
         FileNotFoundError: If pooling_selection.json is missing.
+        StaleArtifactError: If the selection belongs to another split or dataset.
     """
     selection_path = Path(selection_path)
     if not selection_path.is_file():
@@ -167,6 +195,7 @@ def load_selected_pooling(selection_path: Path) -> str:
         )
     with open(selection_path, encoding="utf-8") as f:
         data = json.load(f)
+    check_identity("pooling_selection.json", data, expected_dataset_hash, expected_split_hash)
     pooling = str(data["selected_pooling"])
     logger.info(f"Loaded selected pooling '{pooling}' from {selection_path}")
     return pooling

@@ -68,7 +68,7 @@ def _parse_ts_file(file_path: Path) -> tuple[np.ndarray, np.ndarray]:
                 data_lines.append(vals)
                 labels_list.append(label)
 
-    X = np.array(data_lines, dtype=np.float32)
+    X = np.array(data_lines, dtype=np.float64)
     y = np.array(labels_list, dtype=np.int64)
     return X, y
 
@@ -85,7 +85,7 @@ def _parse_txt_file(file_path: Path) -> tuple[np.ndarray, np.ndarray]:
     Returns:
         Tuple of (X, y) as numpy arrays.
     """
-    data = np.loadtxt(file_path, dtype=np.float32)
+    data = np.loadtxt(file_path, dtype=np.float64)
     if data.ndim != 2:
         raise DatasetContractError(
             message=f"Expected 2D array from {file_path}, got shape {data.shape}",
@@ -96,7 +96,7 @@ def _parse_txt_file(file_path: Path) -> tuple[np.ndarray, np.ndarray]:
 
     # In UCR UnivData format, first column is label
     labels = data[:, 0].astype(np.int64)
-    features = data[:, 1:].astype(np.float32)
+    features = data[:, 1:].astype(np.float64)
     return features, labels
 
 
@@ -135,9 +135,25 @@ def _parse_arff_file(file_path: Path) -> tuple[np.ndarray, np.ndarray]:
                 labels_list.append(label)
                 data_lines.append(features)
 
-    X = np.array(data_lines, dtype=np.float32)
+    X = np.array(data_lines, dtype=np.float64)
     y = np.array(labels_list, dtype=np.int64)
     return X, y
+
+
+def compute_dataset_hash(manifest: dict[str, Any]) -> str:
+    """Deterministic identity of the dataset content (file checksums and contract), no timestamp."""
+    files = manifest["files"]
+    identity = {
+        "dataset_name": manifest["dataset_name"],
+        "variant": manifest["variant"],
+        "train_sha256": files["train"]["sha256"],
+        "test_sha256": files["test"]["sha256"],
+        "train_samples": files["train"]["samples"],
+        "test_samples": files["test"]["samples"],
+        "sequence_length": manifest["sequence_length"],
+        "num_classes": manifest["num_classes"],
+    }
+    return compute_object_hash(identity)
 
 
 def load_raw_electricdevices(
@@ -350,6 +366,7 @@ def load_raw_electricdevices(
         "num_dimensions": NUM_FEATURES,
         "loaded_timestamp": datetime.now(UTC).isoformat(),
     }
+    manifest_data["dataset_hash"] = compute_dataset_hash(manifest_data)
     manifest_data["manifest_hash"] = compute_object_hash(manifest_data)
 
     if processed_dir is not None:

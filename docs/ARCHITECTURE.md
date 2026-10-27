@@ -1,27 +1,41 @@
-# Arquitetura do Software e Separação de Responsabilidades
+# Arquitetura do Software
 
-O repositório é projetado seguindo princípios sólidos de Engenharia de Software, com desacoplamento rigoroso entre camadas funcionais dentro de `src/project4_rnn/`.
+> O experimento completo **não foi executado** nesta etapa.
 
-## 1. Visão Arquitetural
+## 1. Visão em camadas
 
 ```mermaid
-graph TD
-    CLI[CLI Entrypoint: cli.py] --> ORCH[Orchestration Engine: pipeline.py, phase_runner.py]
-    ORCH --> DATA[Data Layer: download, validation, preprocessing, splitting, dataset]
-    ORCH --> MODELS[Model Layer: base, mlp, recurrent, pooling, factory]
-    ORCH --> TRAIN[Training Engine: trainer, early_stopping, checkpointing, history]
-    ORCH --> EVAL[Evaluation Engine: metrics, predictions, plots, statistics]
-    ORCH --> EXP[Experiment Runner: runner, pooling_selection, model_selection, consolidation]
-    ORCH --> AUDIT[Audit Engine: compliance, artifacts, report]
+flowchart TD
+    CLI[cli.py] --> ORCH[orchestration: plano, DAG, pipeline, invalidação, retomada]
+    ORCH --> DATA[data: loader, hashing, splitting, validation, bundle]
+    ORCH --> EXP[experiments: runner, timing, provenance, consolidation, seleções]
+    ORCH --> EVAL[evaluation: métricas, predições, gráficos, final_evaluation]
+    ORCH --> AUD[audit: duplicates, compliance, readiness, smoke, quality, artifacts]
+    EXP --> TRAIN[training: trainer, early stopping, checkpoints]
+    EXP --> MODELS[models: MLP, GRU, LSTM, pooling, factory]
+    DATA --> CFG[config.py, constants.py, reproducibility.py]
 ```
 
-## 2. Descrição das Camadas
+## 2. Módulos
 
-1. **`project4_rnn.config` e `constants`**: Configuração central declarativa baseada em dataclasses validadas a partir de arquivos YAML e constantes globais do ElectricDevices.
-2. **`project4_rnn.data`**: Pipeline de obtenção de dados, validação estrita de contrato (`DatasetContractError`), mapeamento de rótulos 1..7 $\rightarrow$ 0..6 sem vazamento, divisão estratificada determinística e criação de DataLoaders.
-3. **`project4_rnn.models`**: Implementação das arquiteturas neurais (MLP, GRU, LSTM) com verificação estrita de contagem teórica de parâmetros e módulos de pooling temporal.
-4. **`project4_rnn.training`**: Loop de otimização multiclasse com `CrossEntropyLoss`, parada antecipada com `patience`, salvamento de checkpoints pelo menor `val_loss` e histórico por época.
-5. **`project4_rnn.evaluation`**: Cálculo de métricas multiclasse (Macro F1 primário, Balanced Acc, Macro Precision/Recall, matriz de confusão $7 \times 7$) e geração de gráficos de publicação.
-6. **`project4_rnn.experiments`**: Execução de configurações nas 5 sementes, regras de seleção de pooling e modelo final com margem de parcimônia (0.005 Macro F1) e consolidação de resultados.
-7. **`project4_rnn.orchestration`**: Grafo acíclico direcionado (DAG), plano de execução, suporte a `--dry-run`, `--resume`, `--force` e rastreamento de proveniência.
-8. **`project4_rnn.audit`**: Inspeção de conformidade, validação de parâmetros analíticos e geração do relatório de auditoria em Markdown.
+| Pacote | Responsabilidade |
+|---|---|
+| `data` | contrato do dataset, `hash_series`, split agrupado, `DataBundle` (partições + `dataset_hash` + `split_hash`), fixtures sintéticas |
+| `models` | MLP-32, GRU/LSTM e poolings; `build_model` valida a contagem de parâmetros |
+| `training` | `Trainer`, `EarlyStopping` (`val_loss`), checkpoints |
+| `experiments` | `run_single_seed`, `timing` (campos obrigatórios), `provenance` (seed, checkpoint, SHA-256), consolidação e seleções |
+| `evaluation` | métricas, predições, gráficos, avaliação do teste e sensibilidade |
+| `orchestration` | DAG, `build_execution_plan` (dry-run puro), `run_full_pipeline`, `invalidation`, `resume` |
+| `audit` | duplicatas, conformidade científica, prontidão técnica, smoke test, qualidade, limpeza segura |
+
+## 3. Decisões de projeto
+
+1. **Identidade dos dados.** `dataset_hash` (sem timestamp) e `split_hash` acompanham cada execução (`status.json`), a seleção de pooling, a seleção final e o teste. Hash divergente ⇒ artefato obsoleto.
+2. **Sem `data_validation`.** O nó apenas repetia o carregador; contrato e integridade do split agora fazem parte de `build_data_bundle`.
+3. **Dry-run puro.** `build_execution_plan` lê somente a configuração e, se existir, o JSON do split; não cria diretórios, não abre checkpoints, não treina.
+4. **Ciclos de importação evitados.** Constantes compartilhadas (`SENSITIVITY_ARTIFACT_NAMES`) ficam em `constants.py`; `experiments/__init__` não reexporta a consolidação.
+5. **Recursos fechados.** `run_single_seed` fecha o `FileHandler` de `run.log` (necessário no Windows).
+
+## 4. PRÓXIMA EXECUÇÃO EXPERIMENTAL
+
+Para execução posterior pelo usuário (não executados aqui): `clean-artifacts --generated-only`; `run-full-experiment --config configs/base.yaml --fail-fast`; em caso de interrupção, `--resume --fail-fast`.

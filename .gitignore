@@ -63,8 +63,11 @@ logs/
 *.onnx
 
 # Project Artifacts (Runs, Summaries, Audits, Pipelines, Smoke Tests)
-artifacts/
-artifacts*/
+# Development reports (corrections, quality) are versioned; generated outputs are not.
+artifacts/*
+!artifacts/corrections/
+!artifacts/quality/
+artifacts_*/
 artifacts_smoke/
 temp/
 tmp/

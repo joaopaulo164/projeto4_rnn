@@ -1,28 +1,45 @@
 # Requisitos do Sistema e Dependências
 
-## 1. Ambiente de Execução
+> O experimento completo **não foi executado** nesta etapa.
 
-- **Linguagem**: Python >= 3.11
-- **Framework de Deep Learning**: PyTorch >= 2.0.0
-- **Sistema Operacional**: Windows (com suporte completo a PowerShell) e Linux/macOS.
-- **Aceleração**: Detecção automática de CPU / CUDA (GPU). Prioritariamente executável em CPU.
+## 1. Ambiente
 
-## 2. Dependências de Produção
+- Python ≥ 3.11 (validado nesta etapa com Python 3.14).
+- PyTorch ≥ 2.0; CPU por padrão, CUDA detectada automaticamente.
+- Windows (PowerShell), Linux e macOS.
 
-| Pacote | Versão Mínima | Finalidade |
-|---|---|---|
-| `torch` | 2.0.0 | Construção e treinamento de redes neurais |
-| `numpy` | 1.24.0 | Operações matriciais e manipulação de tensores |
-| `pandas` | 2.0.0 | Manipulação de dados tabulares e exportação de CSV |
-| `scikit-learn` | 1.2.0 | Métricas de classificação e divisão estratificada |
-| `matplotlib` | 3.7.0 | Geração de gráficos e curvas de aprendizado |
-| `seaborn` | 0.12.0 | Visualização estatística e matrizes de confusão |
-| `pyyaml` | 6.0 | Leitura e validação de configurações declarativas |
+## 2. Dependências de produção
 
-## 3. Dependências de Qualidade e Testes
+| Pacote | Finalidade |
+|---|---|
+| `torch` | redes e treinamento |
+| `numpy` | arrays, hashing de séries |
+| `pandas` | tabelas e CSV |
+| `scikit-learn` | métricas e `StratifiedGroupKFold` (exige scikit-learn com essa classe; ≥ 1.0) |
+| `matplotlib`, `seaborn` | figuras |
+| `pyyaml` | configurações |
 
-- `pytest` e `pytest-cov`: Execução de suítes de testes unitários, de integração e smoke tests com relatório de cobertura.
-- `ruff`: Linter de alta performance em conformidade com PEP 8.
-- `black`: Formatador de código determinístico.
-- `mypy`: Verificador de tipagem estática rigorosa.
-- `pre-commit`: Ganchos automatizados de qualidade no versionamento.
+## 3. Qualidade e testes
+
+`pytest`, `pytest-cov`, `ruff`, `black`, `mypy` (estrito, `disallow_untyped_defs`), `pre-commit`, `types-PyYAML`. Instalação: `python -m pip install -e ".[dev]"`.
+
+## 4. Requisitos funcionais verificados por testes
+
+| Requisito | Teste |
+|---|---|
+| Contrato 8.926 / 7.711 / 96 / 7 / 1, checksums, NaN, Inf | `test_loader_contract.py` |
+| Hash determinístico (float64, little-endian, sem rótulo/índice) | `test_hashing.py` |
+| Split agrupado, zero hashes compartilhados, persistência, `SplitIntegrityError` | `test_splitting.py` |
+| Auditoria de duplicatas | `test_duplicates_audit.py` |
+| Tempos obrigatórios | `test_timing_consolidation.py` |
+| Proveniência | `test_provenance.py` |
+| Sensibilidade | `test_sensitivity.py` |
+| DAG, dry-run, flags, limpeza | `test_cli_and_dry_run.py`, `test_pipeline_orchestration.py`, `test_artifact_management.py` |
+
+## 5. Requisitos não funcionais
+
+Reprodutibilidade (`set_seed(seed, deterministic=True)`), checkpoint por `val_loss`, rótulos oficiais 1..7 preservados e internos 0..6, parâmetros validados por `build_model()` contra `EXPECTED_PARAMETERS`.
+
+## 6. PRÓXIMA EXECUÇÃO EXPERIMENTAL
+
+Para execução posterior pelo usuário (não executados aqui): `clean-artifacts --generated-only`, depois `run-full-experiment --config configs/base.yaml --fail-fast` (ou `--resume --fail-fast` após interrupção).

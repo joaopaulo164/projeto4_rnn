@@ -1,21 +1,52 @@
-# Guia para Redação de Artigo Científico
+# Guia para o Artigo Científico
 
-Este guia estrutura como utilizar os artefatos e evidências gerados pelo repositório para compor as seções de um artigo científico formal:
+> O experimento completo **não foi executado** nesta etapa. Este guia orienta o relato após a execução futura; não há resultados a citar ainda.
 
-## 1. Seção de Metodologia
+## 1. Dados e contrato
 
-- **Dataset**: Descrever o benchmark ElectricDevices (UCR/UEA), 96 pontos temporais, 7 classes de consumo elétrico e partição oficial (8.926 treino / 7.711 teste com MD5 validado), citando `docs/DATASET.md`.
-- **Arquiteturas**: Detalhar MLP-32, GRU e LSTM com fórmulas analíticas de contagem de parâmetros e verificação estrita (`docs/MODEL_ARCHITECTURES.md`).
-- **Hiperparâmetros**: Adam ($\text{lr}=10^{-3}$, $\text{weight\_decay}=10^{-4}$), batch size 64, early stopping com paciência de 15 épocas no `val_loss`.
+Relate ElectricDevices: 8.926 amostras de treino oficial, 7.711 de teste, comprimento 96, 7 classes, univariado; rótulos oficiais 1..7 mapeados para 0..6 internamente.
 
-## 2. Seção de Resultados e Discussão
+## 2. Duplicatas e split (obrigatório declarar)
 
-- **Tabela 1**: Resultados consolidados de todas as configurações a partir de `artifacts/summary/experiments_summary.csv`.
-- **Figura 1**: Gráfico de ablação de pooling da Fase 2 (`artifacts/summary/figures/phase2_pooling_ablation.png`).
-- **Figura 2**: Estabilidade das 5 sementes (`artifacts/summary/figures/seed_stability_boxplot.png`).
-- **Figura 3**: Dispersão Macro F1 vs Parâmetros (`artifacts/summary/figures/accuracy_vs_parameters.png`).
-- **Tabela 2**: Desempenho no conjunto oficial de teste (7.711 amostras) a partir de `artifacts/summary/final_test_metrics.json`.
+- Existem séries idênticas (16.160 únicas em 16.637; 136 grupos duplicados) e 54 grupos com rótulos conflitantes.
+- Um split aleatório por índice colocaria séries idênticas em treino e validação (vazamento). O split usado agrupa por hash SHA-256 dos 96 valores (`float64`, little-endian), com `StratifiedGroupKFold(5, shuffle, seed 42)` e escolha determinística do fold por tamanho, classes e integridade, nunca por desempenho.
+- Reporte: tamanhos, distribuição por classe, 0 hashes compartilhados, grupos conflitantes mantidos juntos, rótulos preservados, duplicatas internas mantidas.
+- Reporte a sobreposição desenvolvimento × teste (57 grupos) e as análises de sensibilidade.
 
-## 3. Seção de Ameaças à Validade e Limitações
+## 3. Protocolo
 
-- Incluir explicitamente as limitações listadas em `docs/LIMITATIONS.md`.
+8 configurações × 5 sementes (`7, 21, 42, 84, 168`); checkpoint por menor `val_loss` (paciência 15, `min_delta` 1e-4); seleção por F1 macro com parcimônia de 0,5 p.p.; pooling escolhido na fase 2 apenas com validação; teste usado uma única vez no modelo congelado.
+
+## 4. Tabelas e figuras sugeridas
+
+| Item | Fonte |
+|---|---|
+| Desempenho por configuração (média ± dp) | `experiments_summary.csv` |
+| Ablação de pooling | `pooling_ablation.csv` |
+| Ranking de validação | `validation_ranking.csv` |
+| Teste oficial e por classe | `final_test_metrics.json`, `final_test_metrics_by_class.csv` |
+| Sensibilidade | `final_evaluation_sensitivity_comparison.csv` |
+| Custo computacional | tempos de `experiments_summary.csv` |
+| Auditoria de duplicatas | `duplicate_overlap_audit.md` |
+| Proveniência | `final_model_selection.json` |
+
+## 5. Linguagem prudente
+
+Cinco sementes medem estabilidade da otimização. As análises de sensibilidade são descritivas. Não afirme superioridade sem considerar a dispersão entre sementes e o teto imposto pelos rótulos conflitantes.
+
+## 6. Declaração de reprodutibilidade
+
+Cite commit, versões de ambiente, `dataset_hash`, `split_hash`, `config_hash` e `checkpoint_sha256` presentes nos artefatos.
+
+## 7. PRÓXIMA EXECUÇÃO EXPERIMENTAL
+
+Para execução posterior pelo usuário (**não executados** aqui):
+
+```powershell
+python -m project4_rnn.cli clean-artifacts --generated-only
+
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --fail-fast
+
+# em caso de interrupção
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --resume --fail-fast
+```

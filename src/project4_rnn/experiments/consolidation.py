@@ -12,26 +12,38 @@ from project4_rnn.evaluation.plots import (
     plot_pooling_ablation,
     plot_seed_stability,
 )
-from project4_rnn.evaluation.statistics import summarize_seed_runs
+from project4_rnn.evaluation.statistics import find_run_problems, summarize_seed_runs
+from project4_rnn.experiments.timing import (
+    TIMING_FIELDS,
+    IncompleteRunError,
+    RunProblem,
+    find_history_consistency_problems,
+    write_consolidation_status,
+)
 
 logger = logging.getLogger("project4_rnn.experiments.consolidation")
 
 
-def load_all_run_summaries(artifacts_dir: Path) -> dict[str, list[dict[str, Any]]]:
-    """Load metadata and metrics from all completed run folders in artifacts/runs/.
+def load_all_run_summaries(
+    artifacts_dir: Path,
+) -> tuple[dict[str, list[dict[str, Any]]], list[RunProblem]]:
+    """Load metadata and metrics from all run folders in artifacts/runs/.
+
+    Unreadable or missing metadata is reported as a problem instead of being skipped silently.
 
     Args:
         artifacts_dir: Root artifacts directory.
 
     Returns:
-        Dictionary mapping experiment_id to list of run execution dictionaries.
+        Tuple (runs_by_experiment, problems). Each run dict carries its ``_run_dir``.
     """
     runs_dir = artifacts_dir / "runs"
     results: dict[str, list[dict[str, Any]]] = {}
+    problems: list[RunProblem] = []
 
     if not runs_dir.is_dir():
         logger.warning(f"No runs directory found at {runs_dir}")
-        return results
+        return results, problems
 
     for exp_dir in sorted(runs_dir.iterdir()):
         if not exp_dir.is_dir():
@@ -42,16 +54,34 @@ def load_all_run_summaries(artifacts_dir: Path) -> dict[str, list[dict[str, Any]
         for seed_dir in sorted(exp_dir.iterdir()):
             if not seed_dir.is_dir():
                 continue
+            run_id = f"{exp_id}/seed_{seed_dir.name}"
             meta_file = seed_dir / "execution_metadata.json"
-            if meta_file.is_file():
-                try:
-                    with open(meta_file, encoding="utf-8") as f:
-                        data = json.load(f)
-                    results[exp_id].append(data)
-                except Exception as e:
-                    logger.warning(f"Error reading {meta_file}: {e}")
+            if not meta_file.is_file():
+                problems.append(RunProblem(run_id, "execution_metadata.json", "is missing"))
+                continue
+            try:
+                with open(meta_file, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                problems.append(
+                    RunProblem(run_id, "execution_metadata.json", f"is unreadable: {e}")
+                )
+                continue
+            data["_run_dir"] = str(seed_dir)
+            results[exp_id].append(data)
 
-    return results
+    return results, problems
+
+
+def _history_problems(run: dict[str, Any], run_id: str) -> list[RunProblem]:
+    history_path = Path(run["_run_dir"]) / "training_history.csv"
+    if not history_path.is_file():
+        return [RunProblem(run_id, "training_history.csv", "is missing")]
+    try:
+        history = pd.read_csv(history_path)
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        return [RunProblem(run_id, "training_history.csv", f"is unreadable: {e}")]
+    return find_history_consistency_problems(run, history, run_id)
 
 
 def consolidate_experiments(
@@ -59,11 +89,18 @@ def consolidate_experiments(
 ) -> dict[str, Any]:
     """Consolidate all runs into summary tables, specialized comparison CSVs, and plots.
 
+    Every run is validated first. If any run has a missing or invalid field (timings included)
+    the consolidation is marked INCOMPLETE in ``consolidation_status.json`` and halted; no
+    summary table is written from partial or zero-filled data.
+
     Args:
         artifacts_dir: Root artifacts directory.
 
     Returns:
         Dictionary containing consolidated summaries.
+
+    Raises:
+        IncompleteRunError: If any run is incomplete or inconsistent.
     """
     artifacts_dir = Path(artifacts_dir)
     summary_dir = artifacts_dir / "summary"
@@ -71,10 +108,25 @@ def consolidate_experiments(
     summary_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    all_runs = load_all_run_summaries(artifacts_dir)
-    if not all_runs:
+    all_runs, problems = load_all_run_summaries(artifacts_dir)
+    if not all_runs and not problems:
         logger.warning("No completed experiment runs found to consolidate.")
         return {}
+
+    for exp_id, runs in all_runs.items():
+        for r in runs:
+            run_id = f"{exp_id}/seed_{r.get('seed', '?')}"
+            problems.extend(find_run_problems(r, run_id))
+            if not any(p.run_id == run_id for p in problems):
+                problems.extend(_history_problems(r, run_id))
+
+    if problems:
+        write_consolidation_status(summary_dir, complete=False, problems=problems)
+        logger.error(f"Consolidation halted: {len(problems)} problem(s) found.")
+        raise IncompleteRunError(problems)
+
+    n_runs = sum(len(v) for v in all_runs.values())
+    write_consolidation_status(summary_dir, complete=True, runs_consolidated=n_runs)
 
     # 1. Build metrics_by_seed DataFrame
     seed_records: list[dict[str, Any]] = []
@@ -82,18 +134,18 @@ def consolidate_experiments(
         for r in runs:
             row = {
                 "experiment_id": exp_id,
-                "phase": r.get("phase", 0),
-                "seed": r.get("seed", 0),
-                "best_epoch": r.get("best_epoch", 0),
-                "total_epochs": r.get("total_epochs", 0),
-                "total_training_time_sec": r.get("total_duration_sec", 0.0),
-                "best_val_loss": r.get("best_val_loss", 0.0),
-                "total_parameters": r.get("total_parameters", 0),
-                "trainable_parameters": r.get("trainable_parameters", 0),
+                "phase": r["phase"],
+                "seed": r["seed"],
+                "best_epoch": r["best_epoch"],
+                "total_epochs": r["total_epochs"],
+                "best_val_loss": r["best_val_loss"],
+                "total_parameters": r["total_parameters"],
+                "trainable_parameters": r["trainable_parameters"],
             }
-            val_m = r.get("validation_metrics", {})
-            for k, v in val_m.items():
-                if isinstance(v, (int, float)) and v is not None:
+            for name in TIMING_FIELDS:
+                row[name] = r[name]
+            for k, v in r["validation_metrics"].items():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
                     row[f"val_{k}"] = v
             seed_records.append(row)
 
@@ -106,7 +158,7 @@ def consolidate_experiments(
     exp_summaries: list[dict[str, Any]] = []
     for exp_id, runs in all_runs.items():
         if runs:
-            phase = runs[0].get("phase", 0)
+            phase = runs[0]["phase"]
             summary_dict = summarize_seed_runs(experiment_id=exp_id, phase=phase, runs=runs)
             exp_summaries.append(summary_dict)
 

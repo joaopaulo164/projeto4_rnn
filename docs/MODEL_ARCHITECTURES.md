@@ -1,34 +1,41 @@
-# Arquiteturas Neurais e Contagem Analítica de Parâmetros
+# Arquiteturas Neurais e Contagem de Parâmetros
 
-## 1. Baseline: MLP-32 (E01)
+> O experimento completo **não foi executado** nesta etapa. Modelos só são instanciados por `build_model(config)`, que valida a contagem exata (`EXPECTED_PARAMETERS`). Rótulos internos 0..6 (sete logits); rótulos oficiais 1..7 não são alterados.
 
-- **Camada 1**: `Linear(96, 32)` $\rightarrow 96 \times 32 + 32 = 3.104$ parâmetros.
-- **Ativação**: `ReLU()`.
-- **Camada 2**: `Linear(32, 7)` $\rightarrow 32 \times 7 + 7 = 231$ parâmetros.
-- **Total**: $3.104 + 231 = \mathbf{3.335}$ parâmetros.
+## 1. MLP-32 (E01)
 
-## 2. Modelos GRU (E02-E05, E07)
+`Linear(96, 32)` = 3.104; `ReLU`; `Linear(32, 7)` = 231. **Total 3.335.**
 
-A célula GRU possui 3 portas (reset, update, new candidate). Para cada porta:
-$$\text{Params}_{\text{gate}} = (d_{\text{in}} + d_{\text{hidden}}) \times d_{\text{hidden}} + 2 \times d_{\text{hidden}}$$
+## 2. GRU (E02–E05, E07)
 
-- **GRU-32** ($d_{\text{in}} = 1, d_{\text{hidden}} = 32$):
-  - Recorrência: $3 \times ((1 + 32) \times 32 + 64) = 3.360$ parâmetros.
-  - Classificador Simples (`Linear(32, 7)` - Last, Mean, Max): $32 \times 7 + 7 = 231 \rightarrow \mathbf{3.591}$.
-  - Classificador Concatenado (`Linear(64, 7)` - Mean+Max): $64 \times 7 + 7 = 455 \rightarrow \mathbf{3.815}$.
-- **GRU-64** ($d_{\text{in}} = 1, d_{\text{hidden}} = 64$):
-  - Recorrência: $3 \times ((1 + 64) \times 64 + 128) = 12.864$ parâmetros.
-  - Classificador Simples (`Linear(64, 7)`): $64 \times 7 + 7 = 455 \rightarrow \mathbf{13.319}$.
-  - Classificador Concatenado (`Linear(128, 7)`): $128 \times 7 + 7 = 903 \rightarrow \mathbf{13.767}$.
+Parâmetros da recorrência: `3 × ((d_in + d_h) × d_h + 2 × d_h)` (PyTorch usa dois vieses por porta).
 
-## 3. Modelos LSTM (E06, E08)
+| Modelo | Recorrência | Classificador | Total |
+|---|---|---|---|
+| GRU-32 last/mean/max | 3.360 | `Linear(32, 7)` = 231 | **3.591** |
+| GRU-32 mean_max | 3.360 | `Linear(64, 7)` = 455 | **3.815** |
+| GRU-64 simples | 12.864 | `Linear(64, 7)` = 455 | **13.319** |
+| GRU-64 mean_max | 12.864 | `Linear(128, 7)` = 903 | **13.767** |
 
-A célula LSTM possui 4 portas (input, forget, cell, output):
-- **LSTM-32** ($d_{\text{in}} = 1, d_{\text{hidden}} = 32$):
-  - Recorrência: $4 \times ((1 + 32) \times 32 + 64) = 4.480$ parâmetros.
-  - Classificador Simples (`Linear(32, 7)`): $231 \rightarrow \mathbf{4.711}$.
-  - Classificador Concatenado (`Linear(64, 7)`): $455 \rightarrow \mathbf{4.935}$.
-- **LSTM-64** ($d_{\text{in}} = 1, d_{\text{hidden}} = 64$):
-  - Recorrência: $4 \times ((1 + 64) \times 64 + 128) = 17.152$ parâmetros.
-  - Classificador Simples (`Linear(64, 7)`): $455 \rightarrow \mathbf{17.607}$.
-  - Classificador Concatenado (`Linear(128, 7)`): $903 \rightarrow \mathbf{18.055}$.
+## 3. LSTM (E06, E08)
+
+Recorrência: `4 × ((d_in + d_h) × d_h + 2 × d_h)`.
+
+| Modelo | Recorrência | Classificador | Total |
+|---|---|---|---|
+| LSTM-32 simples | 4.480 | 231 | **4.711** |
+| LSTM-32 mean_max | 4.480 | 455 | **4.935** |
+| LSTM-64 simples | 17.152 | 455 | **17.607** |
+| LSTM-64 mean_max | 17.152 | 903 | **18.055** |
+
+## 4. Entrada e saída
+
+Entrada `(B, 96, 1)`; saída `(B, 7)` (logits). A perda é `CrossEntropyLoss` sobre rótulos internos.
+
+## 5. Pooling bloqueado
+
+Em E06–E08 o pooling é `best_pooling`; `build_model()` lança `ValueError` enquanto não for resolvido por `load_selected_pooling(...)` (que valida `split_hash` e `dataset_hash`).
+
+## 6. PRÓXIMA EXECUÇÃO EXPERIMENTAL
+
+Para execução posterior pelo usuário (não executados aqui): `clean-artifacts --generated-only`; `run-full-experiment --config configs/base.yaml --fail-fast`; retomada com `--resume --fail-fast`.

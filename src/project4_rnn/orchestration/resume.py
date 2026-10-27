@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from project4_rnn.orchestration.dependency_graph import PipelineStep
+from project4_rnn.orchestration.dependency_graph import PipelineStep, resolve_output_path
 
 logger = logging.getLogger("project4_rnn.orchestration.resume")
 
@@ -12,12 +12,16 @@ def is_step_completed(
     step: PipelineStep,
     artifacts_dir: Path = Path("artifacts"),
 ) -> bool:
-    """Check if all expected output artifacts for a step exist and are non-empty."""
+    """Check if all expected output artifacts for a step exist and are non-empty.
+
+    ``artifacts/...`` outputs are resolved under ``artifacts_dir``; other paths (``data/...``)
+    are used as declared.
+    """
     if not step.expected_outputs:
         return False
 
     for out_path in step.expected_outputs:
-        p = Path(out_path)
+        p = resolve_output_path(out_path, artifacts_dir)
         if not p.is_file() or p.stat().st_size == 0:
             return False
 

@@ -15,6 +15,8 @@ from project4_rnn.constants import (
     OFFICIAL_TRAIN_SAMPLES,
     PARSIMONY_THRESHOLD,
     SEQUENCE_LENGTH,
+    SPLIT_METHOD,
+    SPLIT_N_SPLITS,
     SPLIT_SEED,
     TEST_FILE_NAME,
     TEST_MD5,
@@ -48,6 +50,9 @@ class DataConfig:
     split_seed: int = SPLIT_SEED
     val_split_ratio: float = VAL_SPLIT_RATIO
     stratified: bool = True
+    split_method: str = SPLIT_METHOD
+    split_n_splits: int = SPLIT_N_SPLITS
+    group_by_series_hash: bool = True
     official_to_internal_label: dict[int, int] = field(
         default_factory=lambda: dict(OFFICIAL_TO_INTERNAL_LABEL)
     )

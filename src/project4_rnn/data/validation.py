@@ -186,9 +186,10 @@ def validate_dataset_arrays(
         "total_unique_series": int(unique_rows.shape[0]),
         "exact_duplicate_series": exact_duplicates,
         "is_valid": True,
-        "timestamp": datetime.now(UTC).isoformat(),
     }
+    # The hash covers only deterministic content; the timestamp is added afterwards.
     report["overall_hash"] = compute_object_hash(report)
+    report["overall_checks"]["timestamp"] = datetime.now(UTC).isoformat()
 
     logger.info(
         f"Data validation passed. Total samples={X_all.shape[0]}, "

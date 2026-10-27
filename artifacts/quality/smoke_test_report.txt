@@ -1,0 +1,16 @@
+TESTE TÉCNICO — NÃO É RESULTADO CIENTÍFICO.
+
+Smoke test reduzido sobre fixture sintética (1 semente, no máximo 2 épocas).
+Nenhum dado oficial, checkpoint científico ou teste oficial foi utilizado.
+Data: 2026-10-27T22:23:13.785530+00:00
+
+[PASS] fixture contract: 228 dev / 89 test series, length 96, 7 classes
+[PASS] hashing and grouped split: train=182 val=46 shared_hashes=0 split_hash=0e8b8808e0a8
+[PASS] duplicate audit: 8 audit artifacts written to a temporary directory
+[PASS] training (<=2 epochs): E01_MLP_32 seed 42: 2 epoch(s)
+[PASS] recurrent forward/backward: GRU-32 forward/backward with 7 logits
+[PASS] timing and consolidation: timing fields persisted and consolidated without zero defaults
+[PASS] provenance, restore and sensitivity: checkpoint restored (SHA-256 verified), provenance complete, 2 sensitivity variants written to a temporary directory
+
+SMOKE TEST PASSED
+TESTE TÉCNICO — NÃO É RESULTADO CIENTÍFICO.

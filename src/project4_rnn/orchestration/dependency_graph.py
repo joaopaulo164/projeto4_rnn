@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("project4_rnn.orchestration.dependency_graph")
@@ -90,8 +91,23 @@ class DependencyGraph:
         return dependents
 
 
+ARTIFACTS_PREFIX = "artifacts/"
+
+
+def resolve_output_path(logical_path: str, artifacts_dir: Path) -> Path:
+    """Resolve a DAG output path: ``artifacts/...`` lives under ``artifacts_dir``, others as-is."""
+    if logical_path.startswith(ARTIFACTS_PREFIX):
+        return Path(artifacts_dir) / logical_path[len(ARTIFACTS_PREFIX) :]
+    return Path(logical_path)
+
+
 def build_standard_pipeline_graph() -> DependencyGraph:
-    """Build the standard DAG reflecting the complete experimental protocol."""
+    """Build the standard DAG reflecting the complete experimental protocol.
+
+    There is no separate ``data_validation`` node: the data contract (checksums, shapes, classes,
+    NaN/Inf), the hash-grouped split and its integrity checks run inside ``data_preparation``
+    (``build_data_bundle``), so a second node would only repeat the same loader.
+    """
     dag = DependencyGraph()
 
     # 1. Environment & Config
@@ -103,11 +119,14 @@ def build_standard_pipeline_graph() -> DependencyGraph:
         expected_outputs=["artifacts/environment.json"],
     )
 
-    # 2. Data Preparation & Validation
+    # 2. Data preparation: contract validation + hash-grouped split + integrity checks
     dag.add_step(
         step_id="data_preparation",
         phase=None,
-        description="Acquire ElectricDevices, map 1-7 labels to 0-6, create development split (~7141 train, ~1785 val)",
+        description=(
+            "Acquire ElectricDevices, verify the data contract, map labels 1-7 to 0-6 and create "
+            "the hash-grouped train/validation split (zero shared series hashes)"
+        ),
         dependencies=["environment_validation"],
         expected_outputs=[
             "data/processed/split_indices.json",
@@ -116,11 +135,11 @@ def build_standard_pipeline_graph() -> DependencyGraph:
     )
 
     dag.add_step(
-        step_id="data_validation",
+        step_id="duplicate_audit",
         phase=None,
-        description="Validate dataset shapes, non-overlap, absence of NaNs/Infs, and class distribution",
+        description="Audit exact-duplicate series within and across train, validation and test",
         dependencies=["data_preparation"],
-        expected_outputs=["data/processed/dataset_manifest.json"],
+        expected_outputs=["artifacts/audits/duplicate_overlap_audit.json"],
     )
 
     # 3. Phase 1 (E01 - MLP Baseline)
@@ -128,7 +147,7 @@ def build_standard_pipeline_graph() -> DependencyGraph:
         step_id="phase_1",
         phase=1,
         description="Execute E01 MLP-32 baseline across 5 training seeds",
-        dependencies=["data_validation"],
+        dependencies=["data_preparation"],
         expected_outputs=["artifacts/runs/E01_MLP_32/status.json"],
     )
 
@@ -137,7 +156,7 @@ def build_standard_pipeline_graph() -> DependencyGraph:
         step_id="phase_2",
         phase=2,
         description="Execute GRU-32 pooling ablation (last, mean, max, mean_max) across 5 seeds",
-        dependencies=["data_validation"],
+        dependencies=["data_preparation"],
         expected_outputs=[
             "artifacts/runs/E02_GRU_32_LAST/status.json",
             "artifacts/runs/E03_GRU_32_MEAN/status.json",
@@ -163,7 +182,7 @@ def build_standard_pipeline_graph() -> DependencyGraph:
         step_id="phase_3",
         phase=3,
         description="Execute LSTM-32 with automatically selected pooling across 5 seeds",
-        dependencies=["pooling_selection", "data_validation"],
+        dependencies=["pooling_selection", "data_preparation"],
         expected_outputs=["artifacts/runs/E06_LSTM_32_BEST_POOLING/status.json"],
     )
 
@@ -172,7 +191,7 @@ def build_standard_pipeline_graph() -> DependencyGraph:
         step_id="phase_4",
         phase=4,
         description="Execute capacity scaling: GRU-64 and LSTM-64 with winning pooling across 5 seeds",
-        dependencies=["pooling_selection", "data_validation"],
+        dependencies=["pooling_selection", "data_preparation"],
         expected_outputs=[
             "artifacts/runs/E07_GRU_64_BEST_POOLING/status.json",
             "artifacts/runs/E08_LSTM_64_BEST_POOLING/status.json",
@@ -206,11 +225,27 @@ def build_standard_pipeline_graph() -> DependencyGraph:
         step_id="final_test_evaluation",
         phase=None,
         description="Evaluate the frozen winning model on official 7,711 test samples",
-        dependencies=["final_model_selection", "data_validation"],
+        dependencies=["final_model_selection", "data_preparation"],
         expected_outputs=[
             "artifacts/summary/final_test_metrics.json",
             "artifacts/summary/final_test_predictions.csv",
             "artifacts/summary/final_test_probabilities.csv",
+        ],
+    )
+
+    # 10b. Descriptive sensitivity analyses of the frozen model (never used for selection)
+    dag.add_step(
+        step_id="sensitivity_evaluation",
+        phase=None,
+        description=(
+            "Evaluate the frozen model on the test set without exact-overlap series and without "
+            "label-conflict groups (descriptive only)"
+        ),
+        dependencies=["final_test_evaluation", "duplicate_audit"],
+        expected_outputs=[
+            "artifacts/summary/final_test_metrics_no_exact_overlap.json",
+            "artifacts/summary/final_test_metrics_without_label_conflicts.json",
+            "artifacts/summary/final_evaluation_sensitivity_comparison.csv",
         ],
     )
 
@@ -219,7 +254,7 @@ def build_standard_pipeline_graph() -> DependencyGraph:
         step_id="evidence_generation",
         phase=None,
         description="Generate scientific tables, high-resolution figures, and article evidence catalog",
-        dependencies=["final_test_evaluation"],
+        dependencies=["final_test_evaluation", "sensitivity_evaluation"],
         expected_outputs=["artifacts/summary/article_evidence_catalog.md"],
     )
 

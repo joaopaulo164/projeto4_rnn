@@ -5,41 +5,37 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pandas as pd
-
 from project4_rnn.audit.compliance import ComplianceAuditor
 from project4_rnn.audit.report import generate_audit_report
-from project4_rnn.config import build_experiment_config
-from project4_rnn.data.dataset import create_dataloaders
-from project4_rnn.data.download import download_electricdevices
-from project4_rnn.data.loader import load_raw_electricdevices
-from project4_rnn.data.preprocessing import (
-    fit_and_apply_scaler,
-    map_official_to_internal_labels,
-)
-from project4_rnn.data.splitting import create_or_load_split
-from project4_rnn.data.validation import (
-    save_dataset_manifest,
-    validate_dataset_arrays,
+from project4_rnn.config import ExperimentConfig, build_experiment_config
+from project4_rnn.data.bundle import DataBundle, build_data_bundle
+from project4_rnn.evaluation.final_evaluation import (
+    make_checkpoint_evaluator,
+    run_sensitivity_evaluations,
+    write_primary_artifacts,
 )
 from project4_rnn.evaluation.plots import (
     plot_class_distribution,
     plot_confusion_matrix,
     plot_time_series_samples,
 )
-from project4_rnn.evaluation.predictions import save_prediction_artifacts
 from project4_rnn.experiments.consolidation import consolidate_experiments
 from project4_rnn.experiments.model_selection import select_final_model
 from project4_rnn.experiments.pooling_selection import (
     load_selected_pooling,
     select_best_pooling,
 )
-from project4_rnn.experiments.registry import get_experiments_for_phase
+from project4_rnn.experiments.provenance import (
+    StaleArtifactError,
+    build_final_selection_provenance,
+    build_final_test_provenance,
+    check_identity,
+    select_best_seed,
+    validate_final_selection,
+    verify_checkpoint_integrity,
+)
+from project4_rnn.experiments.registry import EXPERIMENT_REGISTRY, get_experiments_for_phase
 from project4_rnn.experiments.runner import run_experiment_all_seeds
-from project4_rnn.models.factory import build_model
-from project4_rnn.training.checkpointing import load_checkpoint
-from project4_rnn.training.trainer import Trainer
 
 logger = logging.getLogger("project4_rnn.orchestration.phase_runner")
 
@@ -47,102 +43,68 @@ logger = logging.getLogger("project4_rnn.orchestration.phase_runner")
 def prepare_and_load_data(
     base_config_path: Path = Path("configs/base.yaml"),
     force: bool = False,
-) -> tuple[
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    dict[str, Any],
-]:
+    artifacts_dir: Path = Path("artifacts"),
+) -> DataBundle:
     """Acquire, load, split, and validate ElectricDevices dataset partitions.
+
+    The data contract, the grouped split (zero shared hashes between train and validation) and
+    the split integrity are verified here; there is no separate data-validation pipeline step.
 
     Args:
         base_config_path: Path to configs/base.yaml.
-        force: If True, forces redownload and recreate of split.
+        force: If True, recreates the split.
+        artifacts_dir: Root where exploratory figures are written (``summary/figures``).
 
     Returns:
-        Tuple of (X_train, y_train_mapped, X_val, y_val_mapped, X_test, y_test_mapped, val_idx, val_report).
+        DataBundle with float32 partitions, internal labels, hashes and the split identity.
     """
     base_cfg = build_experiment_config(base_config_path)
+    bundle = build_data_bundle(base_cfg, force=force)
 
-    raw_dir = Path(base_cfg.data.raw_dir)
-    processed_dir = Path(base_cfg.data.processed_dir)
-    processed_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Acquire raw data
-    download_electricdevices(raw_dir=raw_dir)
-
-    # 2. Load raw files with integrated contract validation
-    X_train_raw, y_train_raw, X_test_raw, y_test_raw, manifest_dict = load_raw_electricdevices(
-        raw_dir=raw_dir,
-        verify_checksums=True,
-        processed_dir=processed_dir,
-    )
-
-    # 3. Create or load fixed stratified split on official train (8,926 samples)
-    split_indices_path = processed_dir / "split_indices.json"
-    train_idx, val_idx = create_or_load_split(
-        y_train_official=y_train_raw,
-        split_indices_path=split_indices_path,
-        seed=base_cfg.data.split_seed,
-        val_ratio=base_cfg.data.val_split_ratio,
-        force_recreate=force,
-    )
-
-    X_train = X_train_raw[train_idx]
-    y_train_orig = y_train_raw[train_idx]
-    X_val = X_train_raw[val_idx]
-    y_val_orig = y_train_raw[val_idx]
-    X_test = X_test_raw
-    y_test_orig = y_test_raw
-
-    # 4. Map official labels (1..7) to internal indices (0..6)
-    y_train = map_official_to_internal_labels(y_train_orig)
-    y_val = map_official_to_internal_labels(y_val_orig)
-    y_test = map_official_to_internal_labels(y_test_orig)
-
-    # 5. Optional normalization strictly fitted on train
-    if base_cfg.data.normalization.get("enabled", False):
-        scaler_type = base_cfg.data.normalization.get("type", "zscore")
-        X_train, X_val, X_test, scaler_stats = fit_and_apply_scaler(
-            X_train, X_val, X_test, scaler_type=scaler_type
-        )
-
-    # 6. Validate partitions and update manifest
-    val_report = validate_dataset_arrays(
-        X_train=X_train,
-        y_train=y_train_orig,
-        X_val=X_val,
-        y_val=y_val_orig,
-        X_test=X_test,
-        y_test=y_test_orig,
-        expected_train_count=len(train_idx),
-        expected_val_count=len(val_idx),
-        expected_test_count=len(y_test_orig),
-    )
-    manifest_dict["validation_report"] = val_report
-    manifest_path = processed_dir / "dataset_manifest.json"
-    save_dataset_manifest(manifest_dict, manifest_path)
-
-    # Save data distribution and time series exploratory plots
-    figures_dir = Path("artifacts/summary/figures")
+    figures_dir = Path(artifacts_dir) / "summary" / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
+    y_train_orig = bundle.y_dev_official[bundle.train_idx]
+    y_val_orig = bundle.y_dev_official[bundle.val_idx]
     plot_class_distribution(
         y_train=y_train_orig,
         y_val=y_val_orig,
-        y_test=y_test_orig,
+        y_test=bundle.y_test_official,
         output_path=figures_dir / "class_distribution.png",
     )
     plot_time_series_samples(
-        X=X_train,
+        X=bundle.X_train,
         y=y_train_orig,
         output_path=figures_dir / "time_series_samples.png",
     )
+    return bundle
 
-    return X_train, y_train, X_val, y_val, X_test, y_test, val_idx, val_report
+
+def _run_config_all_seeds(
+    cfg: ExperimentConfig,
+    bundle: DataBundle,
+    artifacts_dir: Path,
+    force: bool,
+) -> list[dict[str, Any]]:
+    return run_experiment_all_seeds(
+        config=cfg,
+        X_train=bundle.X_train,
+        y_train=bundle.y_train,
+        X_val=bundle.X_val,
+        y_val=bundle.y_val,
+        val_indices=bundle.val_idx,
+        dataset_hash=bundle.dataset_hash,
+        split_hash=bundle.split_hash,
+        artifacts_dir=artifacts_dir,
+        force=force,
+    )
+
+
+def _selected_pooling(artifacts_dir: Path, bundle: DataBundle) -> str:
+    return load_selected_pooling(
+        Path(artifacts_dir) / "summary" / "pooling_selection.json",
+        expected_split_hash=bundle.split_hash,
+        expected_dataset_hash=bundle.dataset_hash,
+    )
 
 
 def run_phase_1(
@@ -152,25 +114,13 @@ def run_phase_1(
 ) -> list[dict[str, Any]]:
     """Execute Phase 1: E01 MLP-32 Baseline across 5 seeds."""
     logger.info("========== EXECUTING PHASE 1: BASELINE (E01_MLP_32) ==========")
-    X_train, y_train, X_val, y_val, _, _, val_idx, _ = prepare_and_load_data(
-        base_config_path, force=force
-    )
+    bundle = prepare_and_load_data(base_config_path, force=force, artifacts_dir=artifacts_dir)
 
     cfg = build_experiment_config(
         base_config_path=base_config_path,
         experiment_config_path=Path("configs/phase_1/mlp_32.yaml"),
     )
-    summaries = run_experiment_all_seeds(
-        config=cfg,
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_val,
-        y_val=y_val,
-        val_indices=val_idx,
-        artifacts_dir=artifacts_dir,
-        force=force,
-    )
-    return summaries
+    return _run_config_all_seeds(cfg, bundle, artifacts_dir, force)
 
 
 def run_phase_2(
@@ -180,43 +130,24 @@ def run_phase_2(
 ) -> dict[str, Any]:
     """Execute Phase 2: GRU-32 pooling ablation (E02-E05) and select winning pooling."""
     logger.info("========== EXECUTING PHASE 2: GRU POOLING ABLATION (E02-E05) ==========")
-    X_train, y_train, X_val, y_val, _, _, val_idx, val_report = prepare_and_load_data(
-        base_config_path, force=force
-    )
+    bundle = prepare_and_load_data(base_config_path, force=force, artifacts_dir=artifacts_dir)
 
-    phase_specs = get_experiments_for_phase(2)
-
-    for spec in phase_specs:
+    for spec in get_experiments_for_phase(2):
         cfg = build_experiment_config(
             base_config_path=base_config_path,
             experiment_config_path=Path(spec.config_file),
         )
-        run_experiment_all_seeds(
-            config=cfg,
-            X_train=X_train,
-            y_train=y_train,
-            X_val=X_val,
-            y_val=y_val,
-            val_indices=val_idx,
-            artifacts_dir=artifacts_dir,
-            force=force,
-        )
+        _run_config_all_seeds(cfg, bundle, artifacts_dir, force)
 
-    # Consolidate intermediate results
     consolidation = consolidate_experiments(artifacts_dir)
-    exp_sums = consolidation.get("exp_summaries", [])
-    p2_sums = [s for s in exp_sums if s.get("phase") == 2]
+    p2_sums = [s for s in consolidation.get("exp_summaries", []) if s.get("phase") == 2]
 
-    # Select best pooling
-    data_hash = val_report.get("overall_hash")
-    selection_out = artifacts_dir / "summary" / "pooling_selection.json"
-    selection_result = select_best_pooling(
+    return select_best_pooling(
         phase2_summaries=p2_sums,
-        output_path=selection_out,
-        data_hash=data_hash,
+        output_path=Path(artifacts_dir) / "summary" / "pooling_selection.json",
+        dataset_hash=bundle.dataset_hash,
+        split_hash=bundle.split_hash,
     )
-
-    return selection_result
 
 
 def run_phase_3(
@@ -226,29 +157,15 @@ def run_phase_3(
 ) -> list[dict[str, Any]]:
     """Execute Phase 3: LSTM-32 with automatically selected winning pooling strategy."""
     logger.info("========== EXECUTING PHASE 3: LSTM-32 VS GRU-32 ==========")
-    pooling_selection_path = artifacts_dir / "summary" / "pooling_selection.json"
-    selected_pooling = load_selected_pooling(pooling_selection_path)
-
-    X_train, y_train, X_val, y_val, _, _, val_idx, _ = prepare_and_load_data(
-        base_config_path, force=force
-    )
+    bundle = prepare_and_load_data(base_config_path, force=force, artifacts_dir=artifacts_dir)
+    selected_pooling = _selected_pooling(artifacts_dir, bundle)
 
     cfg = build_experiment_config(
         base_config_path=base_config_path,
         experiment_config_path=Path("configs/phase_3/lstm_32_best_pooling.yaml"),
         pooling_override=selected_pooling,
     )
-    summaries = run_experiment_all_seeds(
-        config=cfg,
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_val,
-        y_val=y_val,
-        val_indices=val_idx,
-        artifacts_dir=artifacts_dir,
-        force=force,
-    )
-    return summaries
+    return _run_config_all_seeds(cfg, bundle, artifacts_dir, force)
 
 
 def run_phase_4(
@@ -258,42 +175,51 @@ def run_phase_4(
 ) -> list[dict[str, Any]]:
     """Execute Phase 4: Capacity scaling (GRU-64 and LSTM-64) with winning pooling."""
     logger.info("========== EXECUTING PHASE 4: CAPACITY SCALING (GRU-64 & LSTM-64) ==========")
-    pooling_selection_path = artifacts_dir / "summary" / "pooling_selection.json"
-    selected_pooling = load_selected_pooling(pooling_selection_path)
+    bundle = prepare_and_load_data(base_config_path, force=force, artifacts_dir=artifacts_dir)
+    selected_pooling = _selected_pooling(artifacts_dir, bundle)
 
-    X_train, y_train, X_val, y_val, _, _, val_idx, _ = prepare_and_load_data(
-        base_config_path, force=force
-    )
-
-    phase_specs = get_experiments_for_phase(4)
     all_runs: list[dict[str, Any]] = []
-
-    for spec in phase_specs:
+    for spec in get_experiments_for_phase(4):
         cfg = build_experiment_config(
             base_config_path=base_config_path,
             experiment_config_path=Path(spec.config_file),
             pooling_override=selected_pooling,
         )
-        runs = run_experiment_all_seeds(
-            config=cfg,
-            X_train=X_train,
-            y_train=y_train,
-            X_val=X_val,
-            y_val=y_val,
-            val_indices=val_idx,
-            artifacts_dir=artifacts_dir,
-            force=force,
-        )
-        all_runs.extend(runs)
-
+        all_runs.extend(_run_config_all_seeds(cfg, bundle, artifacts_dir, force))
     return all_runs
+
+
+def resolve_experiment_config(
+    base_config_path: Path,
+    experiment_id: str,
+    summary_dir: Path,
+    bundle: DataBundle,
+) -> ExperimentConfig:
+    """Rebuild the resolved config of an experiment, resolving 'best_pooling' from the selection."""
+    spec = EXPERIMENT_REGISTRY[experiment_id]
+    pooling_override = None
+    if spec.pooling == "best_pooling":
+        pooling_override = load_selected_pooling(
+            Path(summary_dir) / "pooling_selection.json",
+            expected_split_hash=bundle.split_hash,
+            expected_dataset_hash=bundle.dataset_hash,
+        )
+    return build_experiment_config(
+        base_config_path=base_config_path,
+        experiment_config_path=Path(spec.config_file),
+        pooling_override=pooling_override,
+    )
 
 
 def run_final_evaluation(
     base_config_path: Path = Path("configs/base.yaml"),
     artifacts_dir: Path = Path("artifacts"),
 ) -> dict[str, Any]:
-    """Consolidate all experiments, select final winning model, and evaluate on official test set."""
+    """Consolidate, select the final model on validation only, and evaluate it once on the test set.
+
+    The official test set is read only here, after the model and its seed were frozen using
+    validation data. The persisted selection and test metrics carry full provenance.
+    """
     logger.info("========== EXECUTING FINAL MODEL SELECTION & TEST EVALUATION ==========")
     artifacts_dir = Path(artifacts_dir)
     summary_dir = artifacts_dir / "summary"
@@ -301,137 +227,74 @@ def run_final_evaluation(
     summary_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Consolidate all 8 experiments
+    bundle = prepare_and_load_data(base_config_path, artifacts_dir=artifacts_dir)
+
+    # 1. Consolidate all runs (halts on incomplete/invalid runs)
     consolidation = consolidate_experiments(artifacts_dir)
     exp_summaries = consolidation.get("exp_summaries", [])
-
     if not exp_summaries:
         raise RuntimeError("No experimental summaries available to select final model.")
 
-    # 2. Select winning model strictly on validation performance
-    final_model_sel_path = summary_dir / "final_model_selection.json"
-    final_selection = select_final_model(
+    # 2. Select winning model strictly on validation performance, recording provenance
+    def provenance_for(experiment_id: str) -> dict[str, Any]:
+        cfg = resolve_experiment_config(base_config_path, experiment_id, summary_dir, bundle)
+        seed_info = select_best_seed(
+            artifacts_dir / "runs" / experiment_id,
+            expected_split_hash=bundle.split_hash,
+            expected_dataset_hash=bundle.dataset_hash,
+        )
+        return build_final_selection_provenance(
+            cfg, seed_info, bundle.dataset_hash, bundle.split_hash
+        )
+
+    selection = select_final_model(
         all_summaries=exp_summaries,
-        output_path=final_model_sel_path,
+        output_path=summary_dir / "final_model_selection.json",
+        dataset_hash=bundle.dataset_hash,
+        split_hash=bundle.split_hash,
+        provenance_builder=provenance_for,
     )
-    winning_exp_id = final_selection["selected_experiment_id"]
-    logger.info(f"Winning model selected: {winning_exp_id}")
+    validate_final_selection(selection)
+    winning_exp_id = str(selection["experiment_id"])
+    best_seed = int(selection["selected_seed"])
+    logger.info(f"Winning model: {winning_exp_id} / seed {best_seed}")
 
-    # 3. Load dataset partitions
-    X_train, y_train, X_val, y_val, X_test, y_test, _, _ = prepare_and_load_data(base_config_path)
-
-    # 4. Find best checkpoint of winning model across seeds (lowest val loss)
-    runs_dir = artifacts_dir / "runs" / winning_exp_id
-    best_seed = 42
-    lowest_val_loss = float("inf")
-    best_checkpoint_path = runs_dir / "42" / "best_checkpoint.pt"
-
-    for seed_dir in runs_dir.iterdir():
-        if not seed_dir.is_dir():
-            continue
-        meta_file = seed_dir / "execution_metadata.json"
-        if meta_file.is_file():
-            with open(meta_file, encoding="utf-8") as mf:
-                mdata = json.load(mf)
-            vloss = mdata.get("best_val_loss", float("inf"))
-            if vloss < lowest_val_loss:
-                lowest_val_loss = vloss
-                best_seed = int(seed_dir.name)
-                best_checkpoint_path = seed_dir / "best_checkpoint.pt"
+    # 3. Evaluate the frozen checkpoint on the official test set
+    verify_checkpoint_integrity(selection)
+    winning_cfg = resolve_experiment_config(base_config_path, winning_exp_id, summary_dir, bundle)
+    evaluate = make_checkpoint_evaluator(winning_cfg, Path(selection["checkpoint"]), best_seed)
+    test_metrics, test_preds, test_probs, _ = evaluate(bundle.X_test, bundle.y_test)
 
     logger.info(
-        f"Selected best checkpoint for test evaluation from {winning_exp_id} / Seed {best_seed} "
-        f"(Val loss: {lowest_val_loss:.6f})"
+        f"Final Official Test Set Results ({len(bundle.y_test)} samples) | "
+        f"Macro F1: {test_metrics['macro_f1']:.4f} | "
+        f"Bal Acc: {test_metrics['balanced_accuracy']:.4f} | Acc: {test_metrics['accuracy']:.4f}"
     )
 
-    # 5. Load winning model architecture
-    from project4_rnn.experiments.registry import EXPERIMENT_REGISTRY
-
-    winning_spec = EXPERIMENT_REGISTRY[winning_exp_id]
-    pooling_override = None
-    if winning_spec.pooling == "best_pooling":
-        pooling_override = load_selected_pooling(summary_dir / "pooling_selection.json")
-
-    winning_cfg = build_experiment_config(
-        base_config_path=base_config_path,
-        experiment_config_path=Path(winning_spec.config_file),
-        pooling_override=pooling_override,
+    # 4. Persist test artifacts with provenance
+    provenance = build_final_test_provenance(selection)
+    spec = EXPERIMENT_REGISTRY[winning_exp_id]
+    write_primary_artifacts(
+        summary_dir, test_metrics, test_preds, test_probs, bundle.y_test, provenance, spec.phase
     )
 
-    is_rnn = winning_cfg.model.architecture in ("gru", "lstm")
-    model = build_model(winning_cfg, validate_params=False)
-
-    # Load weights
-    load_checkpoint(best_checkpoint_path, model)
-
-    # 6. Create Test DataLoader and evaluate
-    _, _, test_loader = create_dataloaders(
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_val,
-        y_val=y_val,
-        X_test=X_test,
-        y_test=y_test,
-        batch_size=winning_cfg.training.batch_size,
-        reshape_for_rnn=is_rnn,
-    )
-
-    if test_loader is None:
-        raise RuntimeError("Failed to create Test DataLoader.")
-
-    trainer = Trainer(model=model, config=winning_cfg, seed=best_seed)
-    test_metrics, test_preds, test_probs, inf_time = trainer.evaluate(test_loader)
-
-    logger.info(
-        f"Final Official Test Set Results (7,711 samples) | "
-        f"Macro F1: {test_metrics['macro_f1']:.4f} | Bal Acc: {test_metrics['balanced_accuracy']:.4f} | "
-        f"Acc: {test_metrics['accuracy']:.4f}"
-    )
-
-    # 7. Persist Test Artifacts
-    test_metrics_path = summary_dir / "final_test_metrics.json"
-    with open(test_metrics_path, "w", encoding="utf-8") as f:
-        json.dump(test_metrics, f, indent=2)
-
-    # Save per-class metrics
-    per_class_dict = test_metrics.get("per_class_metrics", {})
-    if per_class_dict:
-        class_df = pd.DataFrame(per_class_dict).T
-        class_df.to_csv(summary_dir / "final_test_metrics_by_class.csv")
-
-    save_prediction_artifacts(
-        predictions_csv_path=summary_dir / "final_test_predictions.csv",
-        probabilities_csv_path=summary_dir / "final_test_probabilities.csv",
-        sample_indices=np.arange(len(y_test)),
-        y_true=y_test,
-        y_pred=test_preds,
-        y_prob=test_probs,
-        experiment_id=winning_exp_id,
-        phase=winning_spec.phase,
-        seed=best_seed,
-        checkpoint_name=f"{winning_exp_id}_seed_{best_seed}_best_checkpoint.pt",
-    )
-
-    # 8. Generate Test Evaluation Plots
     plot_confusion_matrix(
-        y_true=y_test,
+        y_true=bundle.y_test,
         y_pred=test_preds,
         output_path=figures_dir / "final_test_confusion_matrix_raw.png",
         title=f"Official Test Confusion Matrix Raw ({winning_exp_id})",
         normalize=False,
     )
     plot_confusion_matrix(
-        y_true=y_test,
+        y_true=bundle.y_test,
         y_pred=test_preds,
         output_path=figures_dir / "final_test_confusion_matrix_normalized.png",
         title=f"Official Test Confusion Matrix Normalized ({winning_exp_id})",
         normalize=True,
     )
 
-    # Re-run consolidation to update evidence catalog
     consolidate_experiments(artifacts_dir)
 
-    # 9. Run Compliance Audit
     auditor = ComplianceAuditor(artifacts_dir=artifacts_dir)
     generate_audit_report(
         auditor, output_path=artifacts_dir / "audits" / "final_compliance_audit.md"
@@ -442,3 +305,60 @@ def run_final_evaluation(
         "best_seed": best_seed,
         "test_metrics": test_metrics,
     }
+
+
+def run_sensitivity_analysis(
+    base_config_path: Path = Path("configs/base.yaml"),
+    artifacts_dir: Path = Path("artifacts"),
+) -> dict[str, dict[str, Any]]:
+    """Evaluate the already-selected, frozen checkpoint on the two sensitivity subsets.
+
+    Requires ``final_model_selection.json`` and ``final_test_metrics.json`` produced by
+    :func:`run_final_evaluation` for the current dataset and split. Results are descriptive and
+    are never used for selection.
+    """
+    artifacts_dir = Path(artifacts_dir)
+    summary_dir = artifacts_dir / "summary"
+    bundle = prepare_and_load_data(base_config_path, artifacts_dir=artifacts_dir)
+
+    selection_path = summary_dir / "final_model_selection.json"
+    full_path = summary_dir / "final_test_metrics.json"
+    for path in (selection_path, full_path):
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"{path} not found; run the final evaluation before the sensitivity analysis."
+            )
+    with open(selection_path, encoding="utf-8") as f:
+        selection = json.load(f)
+    with open(full_path, encoding="utf-8") as f:
+        full_document = json.load(f)
+
+    validate_final_selection(selection)
+    check_identity("final_model_selection.json", selection, bundle.dataset_hash, bundle.split_hash)
+    check_identity("final_test_metrics.json", full_document, bundle.dataset_hash, bundle.split_hash)
+    if full_document["checkpoint_sha256"] != selection["checkpoint_sha256"]:
+        raise StaleArtifactError(
+            "final_test_metrics.json and final_model_selection.json refer to different checkpoints"
+        )
+    verify_checkpoint_integrity(selection)
+
+    cfg = resolve_experiment_config(
+        base_config_path, str(selection["experiment_id"]), summary_dir, bundle
+    )
+    evaluate = make_checkpoint_evaluator(
+        cfg, Path(selection["checkpoint"]), int(selection["selected_seed"])
+    )
+    provenance = build_final_test_provenance(selection)
+    return run_sensitivity_evaluations(
+        evaluate=evaluate,
+        X_test=bundle.X_test,
+        y_test_internal=bundle.y_test,
+        y_test_official=bundle.y_test_official,
+        dev_hashes=bundle.dev_series_hashes,
+        dev_labels=bundle.y_dev_official.tolist(),
+        test_hashes=bundle.test_series_hashes,
+        full_document=full_document,
+        provenance=provenance,
+        summary_dir=summary_dir,
+        phase=EXPERIMENT_REGISTRY[str(selection["experiment_id"])].phase,
+    )

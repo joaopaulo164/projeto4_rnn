@@ -4,18 +4,19 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
-
 from project4_rnn.audit.artifacts import clean_generated_artifacts
 from project4_rnn.audit.compliance import ComplianceAuditor
+from project4_rnn.audit.duplicates import run_duplicate_audit
+from project4_rnn.audit.quality import run_quality_checks
+from project4_rnn.audit.readiness import run_readiness_audit
 from project4_rnn.audit.report import generate_audit_report
+from project4_rnn.audit.smoke import run_smoke_test
 from project4_rnn.config import build_experiment_config
+from project4_rnn.data.bundle import build_data_bundle
 from project4_rnn.experiments.consolidation import consolidate_experiments
 from project4_rnn.experiments.model_selection import select_final_model
-from project4_rnn.experiments.pooling_selection import (
-    load_selected_pooling,
-    select_best_pooling,
-)
+from project4_rnn.experiments.pooling_selection import select_best_pooling
+from project4_rnn.experiments.provenance import build_final_selection_provenance, select_best_seed
 from project4_rnn.experiments.runner import (
     run_experiment_all_seeds,
     run_single_seed,
@@ -23,23 +24,30 @@ from project4_rnn.experiments.runner import (
 from project4_rnn.logging_config import setup_logger
 from project4_rnn.orchestration.phase_runner import (
     prepare_and_load_data,
+    resolve_experiment_config,
     run_final_evaluation,
     run_phase_1,
     run_phase_2,
     run_phase_3,
     run_phase_4,
+    run_sensitivity_analysis,
 )
 from project4_rnn.orchestration.pipeline import run_full_pipeline
 
 logger = setup_logger(name="project4_rnn.cli")
 
+DEFAULT_BASE_CONFIG = "configs/base.yaml"
+
 
 def cmd_prepare_data(args: argparse.Namespace) -> int:
-    """Execute data download, preprocessing, and fixed stratified split."""
+    """Execute data download, contract validation and the hash-grouped split."""
     print(f"Preparing data using config: {args.config}")
     try:
-        prepare_and_load_data(base_config_path=Path(args.config), force=args.force)
-        print("Data preparation completed successfully.")
+        bundle = prepare_and_load_data(base_config_path=Path(args.config), force=args.force)
+        print(
+            f"Data preparation completed: train={len(bundle.train_idx)} "
+            f"val={len(bundle.val_idx)} split_hash={bundle.split_hash}"
+        )
         return 0
     except Exception as e:
         logger.error(f"Data preparation failed: {e}", exc_info=True)
@@ -47,14 +55,17 @@ def cmd_prepare_data(args: argparse.Namespace) -> int:
 
 
 def cmd_validate_data(args: argparse.Namespace) -> int:
-    """Validate dataset files, dimensions, absence of NaN/Inf, and non-overlap."""
+    """Validate the data contract, the grouped split integrity and the absence of NaN/Inf."""
     print(f"Validating data partitions using config: {args.config}")
     try:
-        _, _, _, _, _, _, _, report = prepare_and_load_data(base_config_path=Path(args.config))
+        cfg = build_experiment_config(Path(args.config))
+        bundle = build_data_bundle(cfg, force=False, download=False)
+        checks = bundle.validation_report["overall_checks"]
         print("Data validation PASSED.")
-        print(f"Total samples: {report['overall_checks']['total_samples']}")
-        print(f"Unique series: {report['overall_checks']['total_unique_series']}")
-        print(f"Exact duplicates: {report['overall_checks']['exact_duplicate_series']}")
+        print(f"Total samples: {checks['total_samples']}")
+        print(f"Unique series: {checks['total_unique_series']}")
+        print(f"Exact duplicates: {checks['exact_duplicate_series']}")
+        print(f"Train/validation shared hashes: {bundle.split_payload['shared_hashes_train_val']}")
         return 0
     except Exception as e:
         logger.error(f"Data validation failed: {e}", exc_info=True)
@@ -64,18 +75,24 @@ def cmd_validate_data(args: argparse.Namespace) -> int:
 def cmd_run_experiment(args: argparse.Namespace) -> int:
     """Run an individual experiment configuration for one seed or all seeds."""
     exp_config_path = Path(args.config)
-    base_config_path = Path(args.base_config) if args.base_config else Path("configs/base.yaml")
+    base_config_path = Path(args.base_config) if args.base_config else Path(DEFAULT_BASE_CONFIG)
     artifacts_dir = Path(args.artifacts_dir)
 
     print(f"Running experiment: {exp_config_path}")
 
     try:
-        # Check if experiment requires best pooling
-        pooling_override = None
-        temp_dict = build_experiment_config(base_config_path, exp_config_path)
-        if temp_dict.model.pooling == "best_pooling":
-            pooling_selection_path = artifacts_dir / "summary" / "pooling_selection.json"
-            pooling_override = load_selected_pooling(pooling_selection_path)
+        bundle = prepare_and_load_data(base_config_path, artifacts_dir=artifacts_dir)
+        probe = build_experiment_config(base_config_path, exp_config_path)
+        if probe.model.pooling == "best_pooling":
+            from project4_rnn.experiments.pooling_selection import load_selected_pooling
+
+            pooling_override = load_selected_pooling(
+                artifacts_dir / "summary" / "pooling_selection.json",
+                expected_split_hash=bundle.split_hash,
+                expected_dataset_hash=bundle.dataset_hash,
+            )
+        else:
+            pooling_override = None
 
         cfg = build_experiment_config(
             base_config_path=base_config_path,
@@ -83,31 +100,33 @@ def cmd_run_experiment(args: argparse.Namespace) -> int:
             pooling_override=pooling_override,
         )
 
-        X_train, y_train, X_val, y_val, _, _, val_idx, _ = prepare_and_load_data(base_config_path)
-
         if args.all_seeds:
             print(f"Executing all {len(cfg.training.train_seeds)} seeds for {cfg.experiment_id}...")
             run_experiment_all_seeds(
                 config=cfg,
-                X_train=X_train,
-                y_train=y_train,
-                X_val=X_val,
-                y_val=y_val,
-                val_indices=val_idx,
+                X_train=bundle.X_train,
+                y_train=bundle.y_train,
+                X_val=bundle.X_val,
+                y_val=bundle.y_val,
+                val_indices=bundle.val_idx,
+                dataset_hash=bundle.dataset_hash,
+                split_hash=bundle.split_hash,
                 artifacts_dir=artifacts_dir,
                 force=args.force,
             )
         else:
-            seed = int(args.seed) if args.seed is not None else 42
+            seed = int(args.seed)
             print(f"Executing single seed {seed} for {cfg.experiment_id}...")
             run_single_seed(
                 config=cfg,
                 seed=seed,
-                X_train=X_train,
-                y_train=y_train,
-                X_val=X_val,
-                y_val=y_val,
-                val_indices=val_idx,
+                X_train=bundle.X_train,
+                y_train=bundle.y_train,
+                X_val=bundle.X_val,
+                y_val=bundle.y_val,
+                val_indices=bundle.val_idx,
+                dataset_hash=bundle.dataset_hash,
+                split_hash=bundle.split_hash,
                 artifacts_dir=artifacts_dir,
                 force=args.force,
             )
@@ -134,18 +153,21 @@ def cmd_consolidate_results(args: argparse.Namespace) -> int:
 
 def cmd_select_pooling(args: argparse.Namespace) -> int:
     """Select winning temporal pooling strategy from Phase 2 results."""
-    summary_path = Path(args.summary)
-    artifacts_dir = summary_path.parent.parent
-    print(f"Selecting pooling strategy using summary: {summary_path}")
+    artifacts_dir = Path(args.artifacts_dir)
+    print(f"Selecting pooling strategy from runs in: {artifacts_dir}")
     try:
+        bundle = prepare_and_load_data(Path(args.config), artifacts_dir=artifacts_dir)
         consolidation = consolidate_experiments(artifacts_dir=artifacts_dir)
-        exp_sums = consolidation.get("exp_summaries", [])
-        p2_sums = [s for s in exp_sums if s.get("phase") == 2]
-
-        output_path = artifacts_dir / "summary" / "pooling_selection.json"
-        res = select_best_pooling(phase2_summaries=p2_sums, output_path=output_path)
+        p2_sums = [s for s in consolidation.get("exp_summaries", []) if s.get("phase") == 2]
+        res = select_best_pooling(
+            phase2_summaries=p2_sums,
+            output_path=artifacts_dir / "summary" / "pooling_selection.json",
+            dataset_hash=bundle.dataset_hash,
+            split_hash=bundle.split_hash,
+        )
         print(
-            f"Selected pooling strategy: {res['selected_pooling']} (from {res['selected_experiment_id']})"
+            f"Selected pooling strategy: {res['selected_pooling']} "
+            f"(from {res['selected_experiment_id']})"
         )
         return 0
     except Exception as e:
@@ -155,15 +177,35 @@ def cmd_select_pooling(args: argparse.Namespace) -> int:
 
 def cmd_select_final_model(args: argparse.Namespace) -> int:
     """Select overall winning architecture strictly on validation performance."""
-    summary_path = Path(args.summary)
-    artifacts_dir = summary_path.parent.parent
-    print(f"Selecting final model using: {summary_path}")
+    artifacts_dir = Path(args.artifacts_dir)
+    base_config_path = Path(args.config)
+    summary_dir = artifacts_dir / "summary"
+    print(f"Selecting final model from runs in: {artifacts_dir}")
     try:
+        bundle = prepare_and_load_data(base_config_path, artifacts_dir=artifacts_dir)
         consolidation = consolidate_experiments(artifacts_dir=artifacts_dir)
-        exp_sums = consolidation.get("exp_summaries", [])
-        output_path = artifacts_dir / "summary" / "final_model_selection.json"
-        res = select_final_model(all_summaries=exp_sums, output_path=output_path)
-        print(f"Selected final model: {res['selected_experiment_id']}")
+
+        def provenance_for(experiment_id: str) -> dict[str, object]:
+            cfg = resolve_experiment_config(base_config_path, experiment_id, summary_dir, bundle)
+            seed_info = select_best_seed(
+                artifacts_dir / "runs" / experiment_id,
+                expected_split_hash=bundle.split_hash,
+                expected_dataset_hash=bundle.dataset_hash,
+            )
+            return build_final_selection_provenance(
+                cfg, seed_info, bundle.dataset_hash, bundle.split_hash
+            )
+
+        res = select_final_model(
+            all_summaries=consolidation.get("exp_summaries", []),
+            output_path=summary_dir / "final_model_selection.json",
+            dataset_hash=bundle.dataset_hash,
+            split_hash=bundle.split_hash,
+            provenance_builder=provenance_for,
+        )
+        print(
+            f"Selected final model: {res['selected_experiment_id']} (seed {res['selected_seed']})"
+        )
         return 0
     except Exception as e:
         logger.error(f"Final model selection failed: {e}", exc_info=True)
@@ -171,15 +213,9 @@ def cmd_select_final_model(args: argparse.Namespace) -> int:
 
 
 def cmd_evaluate_final_model(args: argparse.Namespace) -> int:
-    """Evaluate frozen winning model on official 7,711 test set."""
-    base_config_path = (
-        Path(args.config) if hasattr(args, "config") and args.config else Path("configs/base.yaml")
-    )
-    artifacts_dir = (
-        Path(args.artifacts_dir)
-        if hasattr(args, "artifacts_dir") and args.artifacts_dir
-        else Path("artifacts")
-    )
+    """Evaluate the frozen winning model once on the official test set."""
+    base_config_path = Path(args.config)
+    artifacts_dir = Path(args.artifacts_dir)
     print("Evaluating winning model on official test set...")
     try:
         res = run_final_evaluation(base_config_path=base_config_path, artifacts_dir=artifacts_dir)
@@ -187,6 +223,20 @@ def cmd_evaluate_final_model(args: argparse.Namespace) -> int:
         return 0
     except Exception as e:
         logger.error(f"Test evaluation failed: {e}", exc_info=True)
+        return 1
+
+
+def cmd_evaluate_sensitivity(args: argparse.Namespace) -> int:
+    """Descriptive sensitivity evaluations of the frozen model (never used for selection)."""
+    print("Running sensitivity evaluations of the frozen final model...")
+    try:
+        documents = run_sensitivity_analysis(
+            base_config_path=Path(args.config), artifacts_dir=Path(args.artifacts_dir)
+        )
+        print(f"Sensitivity evaluations completed: {', '.join(documents)}")
+        return 0
+    except Exception as e:
+        logger.error(f"Sensitivity evaluation failed: {e}", exc_info=True)
         return 1
 
 
@@ -215,16 +265,62 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if passed:
             print(f"Compliance audit PASSED. Report generated at {report_path}")
             return 0
-        else:
-            print(f"Compliance audit FAILED. See findings in {report_path}")
-            return 1
+        print(f"Compliance audit FAILED. See findings in {report_path}")
+        return 1
     except Exception as e:
         logger.error(f"Audit execution error: {e}", exc_info=True)
         return 1
 
 
+def cmd_audit_duplicates(args: argparse.Namespace) -> int:
+    """Audit exact-duplicate series within and across train, validation and test."""
+    artifacts_dir = Path(args.artifacts_dir)
+    print("Auditing duplicate series (no training, no model evaluation)...")
+    try:
+        audit = run_duplicate_audit(Path(args.config), artifacts_dir / "audits")
+        glob = audit["global"]
+        print(
+            f"Samples: {glob['samples']} | unique series: {glob['unique_series']} | "
+            f"excess duplicates: {glob['excess_duplicates']} | "
+            f"duplicate groups: {glob['duplicate_groups']} | "
+            f"conflicting groups: {glob['conflicting_groups']}"
+        )
+        print(
+            "Train/validation shared hashes: "
+            f"{audit['pairwise_overlaps']['train_vs_validation']['shared_hashes']}"
+        )
+        print(f"Artifacts written to {artifacts_dir / 'audits'}")
+        return 0
+    except Exception as e:
+        logger.error(f"Duplicate audit failed: {e}", exc_info=True)
+        return 1
+
+
+def cmd_audit_readiness(args: argparse.Namespace) -> int:
+    """Technical readiness audit (not the scientific compliance audit)."""
+    artifacts_dir = Path(args.artifacts_dir)
+    try:
+        if args.run_quality:
+            print("Running quality gate (ruff, black, mypy, pytest + coverage)...")
+            run_quality_checks(output_path=artifacts_dir / "quality" / "quality_results.json")
+        result = run_readiness_audit(
+            base_config_path=Path(args.config),
+            output_dir=artifacts_dir / "audits",
+            quality_dir=artifacts_dir / "quality",
+        )
+        for check in result["checks"]:
+            print(
+                f"[{'PASS' if check['passed'] else 'FAIL'}] {check['check_id']}: {check['details']}"
+            )
+        print(result["status"])
+        return 0 if result["ready"] else 1
+    except Exception as e:
+        logger.error(f"Readiness audit failed: {e}", exc_info=True)
+        return 1
+
+
 def cmd_run_phase(args: argparse.Namespace) -> int:
-    """Execute an individual experimental phase (1, 2, 3, 4) or final evaluation."""
+    """Execute an individual experimental phase (1, 2, 3, 4)."""
     phase = int(args.phase)
     base_cfg = Path(args.config)
     artifacts_dir = Path(args.artifacts_dir)
@@ -251,14 +347,18 @@ def cmd_run_phase(args: argparse.Namespace) -> int:
 
 
 def cmd_run_full_experiment(args: argparse.Namespace) -> int:
-    """Execute the full end-to-end scientific study protocol."""
+    """Execute the full end-to-end scientific study protocol (or only plan it with --dry-run)."""
     base_cfg = Path(args.config)
     artifacts_dir = Path(args.artifacts_dir)
 
     print("================================================================================")
-    print("STARTING FULL REPRODUCIBLE EXPERIMENT PIPELINE")
+    print("FULL EXPERIMENT PIPELINE" + (" (DRY RUN: NOTHING IS EXECUTED)" if args.dry_run else ""))
     print(f"Config: {base_cfg} | Artifacts: {artifacts_dir}")
     print("================================================================================")
+
+    # Fail-fast is the default; --continue-on-error switches it off. Passing both is rejected by
+    # the plan validation instead of being silently accepted.
+    fail_fast = bool(args.fail_fast) or not bool(args.continue_on_error)
 
     try:
         res = run_full_pipeline(
@@ -269,232 +369,205 @@ def cmd_run_full_experiment(args: argparse.Namespace) -> int:
             force=args.force,
             from_phase=args.from_phase,
             until_phase=args.until_phase,
-            fail_fast=args.fail_fast,
+            fail_fast=fail_fast,
             continue_on_error=args.continue_on_error,
         )
 
-        if res.get("status") in ("COMPLETED", "DRY_RUN_COMPLETED"):
+        if res.get("status") == "DRY_RUN_COMPLETED":
+            print("Dry run completed. No training, checkpoint or test evaluation was performed.")
+            return 0
+        if res.get("status") == "COMPLETED":
             print("Full experiment pipeline completed successfully.")
             return 0
-        else:
-            print(f"Pipeline finished with status: {res.get('status')}")
-            return 1
+        print(f"Pipeline finished with status: {res.get('status')}")
+        return 1
     except Exception as e:
         logger.error(f"Full pipeline execution failed: {e}", exc_info=True)
         return 1
 
 
 def cmd_smoke_test(args: argparse.Namespace) -> int:
-    """Execute fast end-to-end smoke test on a small dataset subset."""
+    """Execute the reduced technical smoke test on synthetic fixtures."""
     print("================================================================================")
-    print("STARTING PROJECT 4 RNN SMOKE TEST")
+    print("SMOKE TEST REDUZIDO — TESTE TÉCNICO — NÃO É RESULTADO CIENTÍFICO.")
     print("================================================================================")
-
-    smoke_artifacts = Path("artifacts_smoke")
-    smoke_artifacts.mkdir(parents=True, exist_ok=True)
-
+    report_path = Path(getattr(args, "report", None) or "artifacts/quality/smoke_test_report.txt")
     try:
-        # Create small synthetic test partitions (20 samples train, 10 samples val, 96 points, 7 classes)
-        np.random.seed(42)
-        X_mock_train = np.random.randn(20, 96).astype(np.float32)
-        y_mock_train = np.random.randint(0, 7, size=20, dtype=np.int64)
-        X_mock_val = np.random.randn(10, 96).astype(np.float32)
-        y_mock_val = np.random.randint(0, 7, size=10, dtype=np.int64)
-
-        base_cfg = build_experiment_config(Path("configs/base.yaml"))
-        base_cfg.training.max_epochs = 2
-        base_cfg.training.batch_size = 8
-
-        # 1. Test MLP
-        mlp_cfg = build_experiment_config(
-            Path("configs/base.yaml"),
-            Path("configs/phase_1/mlp_32.yaml"),
-        )
-        mlp_cfg.training.max_epochs = 2
-        mlp_cfg.training.batch_size = 8
-
-        print("1. Running MLP-32 smoke training...")
-        mlp_sum = run_single_seed(
-            config=mlp_cfg,
-            seed=42,
-            X_train=X_mock_train,
-            y_train=y_mock_train,
-            X_val=X_mock_val,
-            y_val=y_mock_val,
-            val_indices=np.arange(10),
-            artifacts_dir=smoke_artifacts,
-            force=True,
-        )
-        print(f"   MLP smoke run completed. Best epoch: {mlp_sum['best_epoch']}")
-
-        # 2. Test GRU
-        gru_cfg = build_experiment_config(
-            Path("configs/base.yaml"),
-            Path("configs/phase_2/gru_32_mean.yaml"),
-        )
-        gru_cfg.training.max_epochs = 2
-        gru_cfg.training.batch_size = 8
-
-        print("2. Running GRU-32 smoke training...")
-        gru_sum = run_single_seed(
-            config=gru_cfg,
-            seed=42,
-            X_train=X_mock_train,
-            y_train=y_mock_train,
-            X_val=X_mock_val,
-            y_val=y_mock_val,
-            val_indices=np.arange(10),
-            artifacts_dir=smoke_artifacts,
-            force=True,
-        )
-        print(f"   GRU smoke run completed. Best epoch: {gru_sum['best_epoch']}")
-
-        # 3. Consolidation & Evidence in smoke directory
-        print("3. Consolidating smoke test artifacts...")
-        consolidate_experiments(artifacts_dir=smoke_artifacts)
-
-        print("================================================================================")
-        print("SMOKE TEST PASSED SUCCESSFULLY!")
-        print("================================================================================")
-        return 0
+        passed = run_smoke_test(report_path=report_path)
     except Exception as e:
         logger.error(f"Smoke test failed: {e}", exc_info=True)
         return 1
+    print(f"Report: {report_path}")
+    print("SMOKE TEST PASSED" if passed else "SMOKE TEST FAILED")
+    return 0 if passed else 1
 
 
 def cmd_clean_artifacts(args: argparse.Namespace) -> int:
-    """Clean generated artifacts, checkpoints, summaries, and cache."""
+    """Remove generated run artifacts, summaries, audits and the processed-data cache."""
     artifacts_dir = Path(args.artifacts_dir)
-    print(f"Cleaning generated artifacts from: {artifacts_dir}")
+    processed_dir = Path(args.processed_dir)
+    if not args.generated_only and not args.dry_run:
+        print("Refusing to clean: pass --generated-only (or --dry-run to preview).")
+        return 1
     try:
-        clean_generated_artifacts(artifacts_dir=artifacts_dir)
-        print("Generated artifacts cleaned successfully.")
+        removed = clean_generated_artifacts(
+            artifacts_dir=artifacts_dir,
+            processed_data_dir=processed_dir,
+            dry_run=args.dry_run,
+        )
+        verb = "Would remove" if args.dry_run else "Removed"
+        for path in removed:
+            print(f"{verb}: {path}")
+        print(f"{verb} {len(removed)} generated item(s).")
         return 0
     except Exception as e:
         logger.error(f"Clean artifacts failed: {e}", exc_info=True)
         return 1
 
 
-def main() -> None:
-    """CLI entrypoint dispatcher."""
+def build_parser() -> argparse.ArgumentParser:
+    """Create the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="project4_rnn",
         description="Project 4: Time Series Classification with RNNs on ElectricDevices",
     )
-
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # 1. prepare-data
-    p_prep = subparsers.add_parser("prepare-data", help="Acquire and prepare dataset partitions")
-    p_prep.add_argument("--config", default="configs/base.yaml", help="Path to base config YAML")
-    p_prep.add_argument("--force", action="store_true", help="Force redownload and recreation")
+    def add_config(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--config", default=DEFAULT_BASE_CONFIG, help="Path to base config YAML")
+
+    def add_artifacts(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--artifacts-dir", default="artifacts", help="Artifacts root directory")
+
+    p_prep = subparsers.add_parser("prepare-data", help="Acquire data and create the grouped split")
+    add_config(p_prep)
+    p_prep.add_argument("--force", action="store_true", help="Recreate the split")
     p_prep.set_defaults(func=cmd_prepare_data)
 
-    # 2. validate-data
-    p_val = subparsers.add_parser("validate-data", help="Validate dataset partitions integrity")
-    p_val.add_argument("--config", default="configs/base.yaml", help="Path to base config YAML")
+    p_val = subparsers.add_parser("validate-data", help="Validate dataset contract and split")
+    add_config(p_val)
     p_val.set_defaults(func=cmd_validate_data)
 
-    # 3. run-experiment
     p_exp = subparsers.add_parser("run-experiment", help="Execute an individual experiment")
     p_exp.add_argument("--config", required=True, help="Path to experiment config YAML")
-    p_exp.add_argument(
-        "--base-config", default="configs/base.yaml", help="Path to base config YAML"
-    )
+    p_exp.add_argument("--base-config", default=DEFAULT_BASE_CONFIG, help="Base config YAML")
     p_exp.add_argument("--seed", type=int, default=42, help="Seed number")
     p_exp.add_argument("--all-seeds", action="store_true", help="Run all 5 configured seeds")
-    p_exp.add_argument("--artifacts-dir", default="artifacts", help="Artifacts root directory")
+    add_artifacts(p_exp)
     p_exp.add_argument("--force", action="store_true", help="Force rerun even if completed")
     p_exp.set_defaults(func=cmd_run_experiment)
 
-    # 4. consolidate-results
     p_cons = subparsers.add_parser("consolidate-results", help="Consolidate all run results")
-    p_cons.add_argument("--artifacts-dir", default="artifacts", help="Artifacts root directory")
+    add_artifacts(p_cons)
     p_cons.set_defaults(func=cmd_consolidate_results)
 
-    # 5. select-pooling
-    p_pool = subparsers.add_parser(
-        "select-pooling", help="Select winning pooling strategy from Phase 2"
-    )
-    p_pool.add_argument(
-        "--summary", default="artifacts/summary/pooling_ablation.csv", help="Summary path"
-    )
+    p_pool = subparsers.add_parser("select-pooling", help="Select pooling from Phase 2 results")
+    add_config(p_pool)
+    add_artifacts(p_pool)
     p_pool.set_defaults(func=cmd_select_pooling)
 
-    # 6. select-final-model
     p_fmod = subparsers.add_parser("select-final-model", help="Select final winning architecture")
-    p_fmod.add_argument(
-        "--summary", default="artifacts/summary/experiments_summary.csv", help="Summary path"
-    )
+    add_config(p_fmod)
+    add_artifacts(p_fmod)
     p_fmod.set_defaults(func=cmd_select_final_model)
 
-    # 7. evaluate-final-model / run-final-evaluation
-    p_feval = subparsers.add_parser("evaluate-final-model", help="Evaluate final model on test set")
-    p_feval.add_argument(
-        "--selection", default="artifacts/summary/final_model_selection.json", help="Selection path"
-    )
-    p_feval.add_argument("--config", default="configs/base.yaml", help="Base config")
-    p_feval.add_argument("--artifacts-dir", default="artifacts", help="Artifacts directory")
-    p_feval.set_defaults(func=cmd_evaluate_final_model)
+    for name, helptext in (
+        ("evaluate-final-model", "Evaluate the frozen final model on the test set"),
+        ("run-final-evaluation", "Run model selection and test evaluation"),
+    ):
+        p_feval = subparsers.add_parser(name, help=helptext)
+        add_config(p_feval)
+        add_artifacts(p_feval)
+        p_feval.set_defaults(func=cmd_evaluate_final_model)
 
-    p_rfeval = subparsers.add_parser(
-        "run-final-evaluation", help="Run model selection and test evaluation"
+    p_sens = subparsers.add_parser(
+        "evaluate-sensitivity", help="Descriptive sensitivity evaluations of the frozen model"
     )
-    p_rfeval.add_argument("--config", default="configs/base.yaml", help="Base config")
-    p_rfeval.add_argument("--artifacts-dir", default="artifacts", help="Artifacts directory")
-    p_rfeval.set_defaults(func=cmd_evaluate_final_model)
+    add_config(p_sens)
+    add_artifacts(p_sens)
+    p_sens.set_defaults(func=cmd_evaluate_sensitivity)
 
-    # 8. generate-evidence
     p_ev = subparsers.add_parser("generate-evidence", help="Generate figures and evidence catalog")
-    p_ev.add_argument("--artifacts-dir", default="artifacts", help="Artifacts root directory")
+    add_artifacts(p_ev)
     p_ev.set_defaults(func=cmd_generate_evidence)
 
-    # 9. audit
     p_aud = subparsers.add_parser("audit", help="Execute compliance and integrity audit")
-    p_aud.add_argument("--artifacts-dir", default="artifacts", help="Artifacts root directory")
+    add_artifacts(p_aud)
     p_aud.set_defaults(func=cmd_audit)
 
-    # 10. run-phase
+    p_dup = subparsers.add_parser("audit-duplicates", help="Audit duplicate series and overlaps")
+    add_config(p_dup)
+    add_artifacts(p_dup)
+    p_dup.set_defaults(func=cmd_audit_duplicates)
+
+    p_ready = subparsers.add_parser(
+        "audit-readiness", help="Technical readiness audit for the future full experiment"
+    )
+    add_config(p_ready)
+    add_artifacts(p_ready)
+    p_ready.add_argument(
+        "--run-quality",
+        action="store_true",
+        help="Run ruff, black, mypy and pytest with coverage first and record the results",
+    )
+    p_ready.set_defaults(func=cmd_audit_readiness)
+
     p_ph = subparsers.add_parser("run-phase", help="Execute a specific phase (1, 2, 3, 4)")
     p_ph.add_argument("--phase", type=int, required=True, help="Phase number (1, 2, 3, 4)")
-    p_ph.add_argument("--config", default="configs/base.yaml", help="Base config YAML")
-    p_ph.add_argument("--artifacts-dir", default="artifacts", help="Artifacts directory")
+    add_config(p_ph)
+    add_artifacts(p_ph)
     p_ph.add_argument("--force", action="store_true", help="Force rerun")
     p_ph.set_defaults(func=cmd_run_phase)
 
-    # 11. run-full-experiment
     p_full = subparsers.add_parser(
-        "run-full-experiment", help="Execute entire scientific study pipeline"
+        "run-full-experiment", help="Execute entire scientific study pipeline (or --dry-run)"
     )
-    p_full.add_argument("--config", default="configs/base.yaml", help="Base config YAML")
-    p_full.add_argument("--artifacts-dir", default="artifacts", help="Artifacts directory")
+    add_config(p_full)
+    add_artifacts(p_full)
     p_full.add_argument(
-        "--dry-run", action="store_true", help="Display execution plan without running"
+        "--dry-run", action="store_true", help="Show the plan only; nothing is trained"
     )
     p_full.add_argument("--resume", action="store_true", help="Resume pending steps only")
     p_full.add_argument("--force", action="store_true", help="Force rerun all steps")
     p_full.add_argument("--from-phase", type=int, default=None, help="Start from phase")
     p_full.add_argument("--until-phase", type=int, default=None, help="Stop after phase")
     p_full.add_argument(
-        "--fail-fast", action="store_true", default=True, help="Stop immediately on error"
+        "--fail-fast", action="store_true", help="Stop at the first failure (default behaviour)"
     )
     p_full.add_argument(
-        "--continue-on-error", action="store_true", default=False, help="Continue independent steps"
+        "--continue-on-error", action="store_true", help="Continue independent steps on failure"
     )
     p_full.set_defaults(func=cmd_run_full_experiment)
 
-    # 12. smoke-test
-    p_smoke = subparsers.add_parser("smoke-test", help="Fast end-to-end smoke test")
+    p_smoke = subparsers.add_parser("smoke-test", help="Reduced technical smoke test (fixtures)")
+    p_smoke.add_argument(
+        "--report", default="artifacts/quality/smoke_test_report.txt", help="Report path"
+    )
     p_smoke.set_defaults(func=cmd_smoke_test)
 
-    # 13. clean-artifacts
     p_clean = subparsers.add_parser("clean-artifacts", help="Clean generated run artifacts")
-    p_clean.add_argument("--artifacts-dir", default="artifacts", help="Artifacts root directory")
+    add_artifacts(p_clean)
+    p_clean.add_argument("--processed-dir", default="data/processed", help="Processed data dir")
+    p_clean.add_argument(
+        "--generated-only",
+        action="store_true",
+        help="Remove only generated outputs (runs, summary, audits, split cache)",
+    )
+    p_clean.add_argument("--dry-run", action="store_true", help="List what would be removed")
     p_clean.set_defaults(func=cmd_clean_artifacts)
 
-    parsed_args = parser.parse_args()
-    exit_code = parsed_args.func(parsed_args)
-    sys.exit(exit_code)
+    return parser
+
+
+def main_returning(argv: list[str] | None = None) -> int:
+    """Parse ``argv``, run the selected command and return its exit code."""
+    parsed_args = build_parser().parse_args(argv)
+    return int(parsed_args.func(parsed_args))
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entrypoint dispatcher."""
+    sys.exit(main_returning(argv))
 
 
 if __name__ == "__main__":

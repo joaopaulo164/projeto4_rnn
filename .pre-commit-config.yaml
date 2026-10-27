@@ -3,23 +3,31 @@ repos:
     rev: v4.4.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^artifacts/
       - id: end-of-file-fixer
+        exclude: ^artifacts/
       - id: check-yaml
       - id: check-added-large-files
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.0
+  # Ruff, Black and mypy run from the project environment (``pip install -e ".[dev]"``) so the
+  # hooks use exactly the same tool versions and first-party import detection as the CI commands
+  # documented in the README (``python -m ruff check .``, ``python -m black --check .`` and
+  # ``python -m mypy src``).
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix]
-
-  - repo: https://github.com/psf/black
-    rev: 23.9.1
-    hooks:
+        name: ruff
+        entry: python -m ruff check
+        language: system
+        types: [python]
       - id: black
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.5.1
-    hooks:
+        name: black
+        entry: python -m black --check
+        language: system
+        types: [python]
       - id: mypy
-        additional_dependencies: [types-PyYAML]
+        name: mypy
+        entry: python -m mypy src
+        language: system
+        types: [python]
+        pass_filenames: false

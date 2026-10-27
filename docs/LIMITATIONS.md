@@ -1,10 +1,46 @@
-# Limitações Científicas e Metodológicas Obrigatórias
+# Limitações
 
-Para assegurar honestidade intelectual e rigor científico, documentam-se as seguintes limitações do estudo:
+> O experimento completo **não foi executado** nesta etapa; as limitações abaixo descrevem o desenho e os dados, não resultados.
 
-1. **Benchmark de Classificação de Séries Temporais**: Os resultados referem-se ao benchmark oficial ElectricDevices do UCR/UEA Archive (16.637 séries temporais, 7 classes, $L=96$).
-2. **Divisão de Desenvolvimento e Resolução Estatística**: A partição de validação (~1.785 amostras, 20% das 8.926 de treino oficial) fornece base robusta, mas variações inferiores à margem de parcimônia de 0.005 Macro F1 são tratadas como equivalência prática.
-3. **Divisão de Desenvolvimento com Semente Fixa**: Foi utilizada uma partição estratificada de treino/validação com `SPLIT_SEED = 42`.
-4. **Interpretação das Sementes**: As 5 sementes (7, 21, 42, 84, 168) avaliam a estabilidade da convergência do otimizador e inicialização de pesos sobre a mesma partição fixa, e **não** constituem intervalos de confiança populacionais ou validação cruzada k-fold.
-5. **Premissa de Transferência de Pooling**: O pooling vencedor selecionado na Fase 2 com base na arquitetura GRU-32 é aplicado às fases dependentes (LSTM e 64 unidades). É teoricamente possível que a estratégia ótima para GRU apresente comportamento distinto em LSTM em diferentes capacidades.
-6. **Diferença Estrutural de Parâmetros**: A célula LSTM possui 4 portas contra 3 portas da GRU, de modo que modelos com a mesma dimensão oculta não possuem contagem idêntica de parâmetros.
+## 1. Duplicatas e rótulos conflitantes
+
+- O ElectricDevices oficial contém séries idênticas: 16.160 únicas em 16.637 amostras (477 excessos, 136 grupos duplicados).
+- 54 grupos (366 amostras) têm **rótulos conflitantes**: os mesmos 96 valores aparecem com classes diferentes. Isso não pode ser resolvido deterministicamente apenas com os valores; os rótulos oficiais não foram alterados, nenhum rótulo majoritário foi escolhido e nenhuma observação foi removida.
+- No split novo, cada hash fica integralmente em treino **ou** validação (0 hashes compartilhados). Duplicatas **internas** a cada partição foram mantidas (sem deduplicação e sem ponderação por grupo), logo uma partição pode conter séries repetidas e as métricas internas podem ser levemente otimistas ou pessimistas conforme o conflito.
+
+## 2. Sobreposição com o teste oficial
+
+Desenvolvimento oficial × teste oficial compartilham 57 hashes (178 amostras de desenvolvimento, 208 de teste, 41 grupos com conflito). O teste não foi modificado; as sensibilidades futuras (sem sobreposição exata, sem conflitos) são apenas descritivas.
+
+## 3. Split
+
+- O split é um único fold (de 5 candidatos) escolhido por critério de tamanho/classes/integridade; as proporções por classe não são exatamente iguais às oficiais.
+- Tamanhos observados: 7.141 treino e 1.785 validação (19,998%), mas o protocolo não presume esses números.
+- Resultados da versão anterior (split por índice, com 24 hashes compartilhados) são incompatíveis e foram invalidados pelo `split_hash`.
+
+## 4. Estatísticas
+
+- Cinco sementes avaliam estabilidade de otimização, não variabilidade amostral.
+- Um único split de validação e um único teste.
+- Regra de parcimônia de 0,5 p.p. de F1 macro é uma convenção do projeto.
+
+## 5. Escopo
+
+Uma base, um domínio (consumo elétrico), sete classes desbalanceadas, CPU; arquiteturas pequenas (MLP-32, GRU/LSTM 32 e 64). Não se generaliza para outras bases.
+
+## 6. Desenvolvimento
+
+Validações desta etapa usam fixtures sintéticas; a cobertura de testes foi medida em 84%, mas isso não substitui a execução experimental completa.
+
+## 7. PRÓXIMA EXECUÇÃO EXPERIMENTAL
+
+Para execução posterior pelo usuário (**não executados** aqui):
+
+```powershell
+python -m project4_rnn.cli clean-artifacts --generated-only
+
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --fail-fast
+
+# em caso de interrupção
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --resume --fail-fast
+```

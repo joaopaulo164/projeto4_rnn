@@ -10,7 +10,14 @@ import pandas as pd
 from project4_rnn.constants import (
     ALL_EXPERIMENT_IDS,
     EXPECTED_PARAMETERS,
+    SENSITIVITY_ARTIFACT_NAMES,
     TRAIN_SEEDS,
+)
+from project4_rnn.data.splitting import SplitIntegrityError, read_split_identity
+from project4_rnn.experiments.provenance import (
+    ProvenanceError,
+    validate_final_selection,
+    validate_final_test_metrics,
 )
 from project4_rnn.experiments.runner import REQUIRED_RUN_ARTIFACTS
 
@@ -32,8 +39,13 @@ class AuditCheckResult:
 class ComplianceAuditor:
     """Auditor inspecting experimental completeness, artifact validity, and protocol compliance."""
 
-    def __init__(self, artifacts_dir: Path = Path("artifacts")) -> None:
+    def __init__(
+        self,
+        artifacts_dir: Path = Path("artifacts"),
+        processed_dir: Path = Path("data/processed"),
+    ) -> None:
         self.artifacts_dir = Path(artifacts_dir)
+        self.processed_dir = Path(processed_dir)
         self.results: list[AuditCheckResult] = []
 
     def run_full_audit(self) -> list[AuditCheckResult]:
@@ -48,6 +60,11 @@ class ComplianceAuditor:
         self._check_parameter_counts()
         self._check_summary_artifacts_and_figures()
         self._check_evidence_catalog()
+        self._check_split_identity()
+        self._check_timing_consolidation()
+        self._check_provenance()
+        self._check_duplicate_audit_artifacts()
+        self._check_sensitivity_artifacts()
 
         passed_count = sum(1 for r in self.results if r.passed)
         failed_count = sum(1 for r in self.results if not r.passed)
@@ -74,7 +91,7 @@ class ComplianceAuditor:
                             completed_runs_count += 1
                         else:
                             missing_runs.append(f"{exp_id}/seed_{seed} (status={st.get('status')})")
-                    except Exception:
+                    except json.JSONDecodeError:
                         missing_runs.append(f"{exp_id}/seed_{seed} (corrupt status.json)")
 
         total_expected = len(ALL_EXPERIMENT_IDS) * len(TRAIN_SEEDS)
@@ -199,7 +216,7 @@ class ComplianceAuditor:
                 df = pd.read_csv(pred_csv)
                 if df.isna().any().any():
                     nan_issues.append(f"NaN found in {pred_csv}")
-            except Exception as e:
+            except (OSError, ValueError, pd.errors.ParserError) as e:
                 nan_issues.append(f"Error reading {pred_csv}: {e}")
 
         passed = len(nan_issues) == 0
@@ -314,5 +331,147 @@ class ComplianceAuditor:
                     else f"{catalog_path} missing."
                 ),
                 evidence_path=str(catalog_path),
+            )
+        )
+
+    def _check_split_identity(self) -> None:
+        """Verify the persisted split is the hash-grouped one and has a valid checksum."""
+        split_path = self.processed_dir / "split_indices.json"
+        try:
+            split_hash = read_split_identity(split_path)
+            with open(split_path, encoding="utf-8") as f:
+                payload = json.load(f)
+            shared = payload.get("shared_hashes_train_val")
+            passed = shared == 0
+            details = f"split_hash={split_hash}; shared train/validation hashes={shared}"
+        except (FileNotFoundError, SplitIntegrityError) as e:
+            passed = False
+            details = f"Split not verifiable: {str(e).splitlines()[0]}"
+
+        self.results.append(
+            AuditCheckResult(
+                check_id="AUDIT_09_GROUPED_SPLIT",
+                name="Hash-Grouped Split With Zero Train/Validation Series Overlap",
+                passed=passed,
+                severity="CRITICAL",
+                details=details,
+                evidence_path=str(split_path),
+            )
+        )
+
+    def _check_timing_consolidation(self) -> None:
+        """Verify the last official consolidation was complete (no missing timing fields)."""
+        status_path = self.artifacts_dir / "summary" / "consolidation_status.json"
+        if not status_path.is_file():
+            passed, details = False, f"{status_path} missing."
+        else:
+            with open(status_path, encoding="utf-8") as f:
+                status = json.load(f)
+            passed = status.get("status") == "COMPLETE"
+            details = (
+                f"Consolidation status: {status.get('status')} "
+                f"({status.get('runs_consolidated', 0)} runs); problems: "
+                f"{len(status.get('problems', []))}"
+            )
+        self.results.append(
+            AuditCheckResult(
+                check_id="AUDIT_10_TIMING_CONSOLIDATION",
+                name="Timing Consolidation Complete Without Defaulted Values",
+                passed=passed,
+                severity="CRITICAL",
+                details=details,
+                evidence_path=str(status_path),
+            )
+        )
+
+    def _check_provenance(self) -> None:
+        """Verify selection and final-test files carry the complete provenance schema."""
+        summary_dir = self.artifacts_dir / "summary"
+        selection_path = summary_dir / "final_model_selection.json"
+        test_path = summary_dir / "final_test_metrics.json"
+        problems: list[str] = []
+        selection: dict[str, object] = {}
+        for path, validator in (
+            (selection_path, validate_final_selection),
+            (test_path, validate_final_test_metrics),
+        ):
+            if not path.is_file():
+                problems.append(f"{path.name} missing")
+                continue
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+            if path == selection_path:
+                selection = payload
+            try:
+                validator(payload)
+            except ProvenanceError as e:
+                problems.append(str(e))
+        if selection and test_path.is_file():
+            with open(test_path, encoding="utf-8") as f:
+                test_payload = json.load(f)
+            pairs = (
+                ("checkpoint_sha256", "checkpoint_sha256"),
+                ("selected_seed", "seed"),
+                ("split_hash", "split_hash"),
+                ("dataset_hash", "dataset_hash"),
+            )
+            for sel_key, test_key in pairs:
+                if selection.get(sel_key) != test_payload.get(test_key):
+                    problems.append(f"{sel_key} differs between selection and test metrics")
+        self.results.append(
+            AuditCheckResult(
+                check_id="AUDIT_11_PROVENANCE",
+                name="Final Model Provenance (seed, checkpoint SHA-256, dataset and split hashes)",
+                passed=not problems,
+                severity="CRITICAL",
+                details=(
+                    "Provenance complete and consistent." if not problems else "; ".join(problems)
+                ),
+            )
+        )
+
+    def _check_duplicate_audit_artifacts(self) -> None:
+        """Verify the duplicate and overlap audit artifacts exist."""
+        audits_dir = self.artifacts_dir / "audits"
+        required = [
+            "duplicate_overlap_audit.json",
+            "duplicate_overlap_audit.md",
+            "duplicate_groups.csv",
+            "duplicate_overlap_pairs.csv",
+            "duplicate_label_conflicts.csv",
+            "duplicate_counts_by_class.csv",
+            "duplicate_sample_inventory.csv",
+            "official_development_test_overlap.json",
+        ]
+        missing = [name for name in required if not (audits_dir / name).is_file()]
+        self.results.append(
+            AuditCheckResult(
+                check_id="AUDIT_12_DUPLICATE_AUDIT",
+                name="Duplicate and Overlap Audit Artifacts",
+                passed=not missing,
+                severity="CRITICAL",
+                details=(
+                    "All duplicate-audit artifacts present."
+                    if not missing
+                    else f"Missing: {missing}"
+                ),
+            )
+        )
+
+    def _check_sensitivity_artifacts(self) -> None:
+        """Verify the descriptive sensitivity evaluation artifacts exist."""
+        summary_dir = self.artifacts_dir / "summary"
+        missing = [
+            name for name in SENSITIVITY_ARTIFACT_NAMES if not (summary_dir / name).is_file()
+        ]
+        self.results.append(
+            AuditCheckResult(
+                check_id="AUDIT_13_SENSITIVITY_EVALUATION",
+                name="Descriptive Sensitivity Evaluation Artifacts",
+                passed=not missing,
+                severity="WARNING",
+                details=(
+                    "All sensitivity artifacts present." if not missing else f"Missing: {missing}"
+                ),
             )
         )

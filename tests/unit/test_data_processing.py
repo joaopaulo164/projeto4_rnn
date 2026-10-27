@@ -12,7 +12,6 @@ from project4_rnn.data.preprocessing import (
     map_internal_to_official_labels,
     map_official_to_internal_labels,
 )
-from project4_rnn.data.splitting import create_or_load_split
 from project4_rnn.data.validation import DatasetContractError, validate_dataset_arrays
 
 
@@ -32,34 +31,6 @@ def test_label_mapping_invalid_value() -> None:
     invalid_labels = np.array([0, 1, 8], dtype=np.int64)
     with pytest.raises(ValueError, match="Unexpected official class label"):
         map_official_to_internal_labels(invalid_labels)
-
-
-def test_stratified_split_partition_and_overlap(tmp_path: Path) -> None:
-    """Verify train/val split proportions, non-overlap, and stratification."""
-    # 700 samples evenly distributed among 7 classes
-    y_dev = np.array([i for i in range(7) for _ in range(100)], dtype=np.int64)
-    split_path = tmp_path / "split_indices.json"
-
-    train_idx, val_idx = create_or_load_split(
-        y_train_official=y_dev,
-        split_indices_path=split_path,
-        seed=42,
-        val_ratio=0.20,
-    )
-
-    assert len(train_idx) == 560
-    assert len(val_idx) == 140
-    assert len(set(train_idx).intersection(set(val_idx))) == 0
-    assert len(set(train_idx).union(set(val_idx))) == 700
-
-    # Test persistence and deterministic reload
-    train_idx_2, val_idx_2 = create_or_load_split(
-        y_train_official=y_dev,
-        split_indices_path=split_path,
-        seed=42,
-    )
-    np.testing.assert_array_equal(train_idx, train_idx_2)
-    np.testing.assert_array_equal(val_idx, val_idx_2)
 
 
 def test_normalization_without_leakage(tmp_path: Path) -> None:
@@ -143,10 +114,11 @@ def test_dataset_validation_detects_nan_and_inf() -> None:
 
 def test_pytorch_dataset_and_dataloaders() -> None:
     """Verify PyTorch dataset shapes and DataLoader reproducibility."""
-    X_train = np.random.randn(100, 96).astype(np.float32)
-    y_train = np.random.randint(0, 7, size=100, dtype=np.int64)
-    X_val = np.random.randn(20, 96).astype(np.float32)
-    y_val = np.random.randint(0, 7, size=20, dtype=np.int64)
+    rng = np.random.default_rng(42)
+    X_train = rng.standard_normal((100, 96)).astype(np.float32)
+    y_train = rng.integers(0, 7, size=100, dtype=np.int64)
+    X_val = rng.standard_normal((20, 96)).astype(np.float32)
+    y_val = rng.integers(0, 7, size=20, dtype=np.int64)
 
     # 1. 2D dataset (MLP)
     ds_mlp = ElectricDevicesDataset(X_train, y_train, reshape_for_rnn=False)

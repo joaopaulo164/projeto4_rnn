@@ -1,0 +1,31 @@
+{
+  "ruff": {
+    "command": "python -m ruff check .",
+    "returncode": 0,
+    "passed": true,
+    "output_tail": "All checks passed!"
+  },
+  "black": {
+    "command": "python -m black --check .",
+    "returncode": 0,
+    "passed": true,
+    "output_tail": "All done! \\u2728 \\U0001f370 \\u2728\n80 files would be left unchanged."
+  },
+  "mypy": {
+    "command": "python -m mypy src",
+    "returncode": 0,
+    "passed": true,
+    "output_tail": "Success: no issues found in 59 source files"
+  },
+  "pytest": {
+    "command": "python -m pytest --cov=src/project4_rnn --cov-report=term-missing --cov-report=xml",
+    "returncode": 0,
+    "passed": true,
+    "output_tail": "src\\project4_rnn\\models\\__init__.py                      6      0   100%\nsrc\\project4_rnn\\models\\base.py                         27      1    96%   25\nsrc\\project4_rnn\\models\\factory.py                      30      5    83%   43, 45, 60, 71, 76\nsrc\\project4_rnn\\models\\mlp.py                          20      2    90%   45, 47\nsrc\\project4_rnn\\models\\pooling.py                      28      2    93%   26, 75\nsrc\\project4_rnn\\models\\recurrent.py                    31      1    97%   74\nsrc\\project4_rnn\\orchestration\\__init__.py               9      0   100%\nsrc\\project4_rnn\\orchestration\\dependency_graph.py      71      9    87%   56, 67, 72, 86-91\nsrc\\project4_rnn\\orchestration\\execution_plan.py       128      8    94%   156-157, 161-163, 165-166, 181\nsrc\\project4_rnn\\orchestration\\invalidation.py          69      0   100%\nsrc\\project4_rnn\\orchestration\\manifest.py              69      0   100%\nsrc\\project4_rnn\\orchestration\\phase_runner.py         124     97    22%   61-79, 88, 103, 116-123, 132-145, 159-168, 177-189, 199-207, 223-303, 320-352\nsrc\\project4_rnn\\orchestration\\pipeline.py              95      1    99%   165\nsrc\\project4_rnn\\orchestration\\resume.py                21      0   100%\nsrc\\project4_rnn\\orchestration\\status.py                17      0   100%\nsrc\\project4_rnn\\reproducibility.py                     52      9    83%   30-31, 39-40, 51-53, 114-115\nsrc\\project4_rnn\\training\\__init__.py                    5      0   100%\nsrc\\project4_rnn\\training\\checkpointing.py              23      1    96%   74\nsrc\\project4_rnn\\training\\early_stopping.py             35      2    94%   29, 57\nsrc\\project4_rnn\\training\\history.py                    23      1    96%   62\nsrc\\project4_rnn\\training\\trainer.py                   127      7    94%   49, 52, 54, 63, 77, 256-257\n----------------------------------------------------------------------------------\nTOTAL                                                 4099    656    84%\nCoverage XML written to file coverage.xml\n186 passed in 28.11s"
+  },
+  "coverage_percent": 84.0,
+  "coverage_minimum_percent": 70.0,
+  "coverage_ok": true,
+  "timestamp": "2026-10-27T22:24:34.559375+00:00",
+  "passed": true
+}

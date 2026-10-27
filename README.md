@@ -1,220 +1,193 @@
 # Projeto 4: Classificação de Séries Temporais com Redes Neurais Recorrentes (RNN)
 
-Repositório científico completo, modular, testável e reprodutível para classificação multiclasse de séries temporais (**ElectricDevices - 7 classes**), implementado em **Python 3.11+ e PyTorch**.
+Repositório científico modular, testável e reprodutível para classificação multiclasse de séries temporais (**ElectricDevices – 7 classes, comprimento 96**), implementado em **Python 3.11+ e PyTorch**.
+
+> **ESTADO DESTA VERSÃO – LEIA ANTES DE USAR.**
+> Esta versão corrige o código, a auditoria de dados, o split treino-validação, a consolidação dos tempos, a proveniência do modelo final e a documentação. **O experimento completo não foi executado nesta etapa**: nenhum dos 40 treinamentos (8 configurações × 5 sementes) foi realizado, nenhuma seleção científica de pooling ou de modelo foi feita e o **teste oficial não foi avaliado**. Nenhum resultado científico novo é apresentado. As métricas que aparecem em testes e no smoke test vêm de fixtures sintéticas e **não são resultados do projeto**.
 
 ---
 
 ## 1. Visão Geral e Perguntas de Pesquisa
 
-O estudo investiga o impacto de redes neurais recorrentes (GRU e LSTM), estratégias de agregação temporal (pooling) e aumento de capacidade na classificação multiclasse de séries temporais de dispositivos elétricos, respondendo a seis questões científicas:
+O estudo investiga o impacto de redes recorrentes (GRU e LSTM), de estratégias de pooling temporal e do aumento de capacidade na classificação de séries de dispositivos elétricos:
 
 - **RQ1**: A recorrência supera o baseline MLP?
-- **RQ2**: Qual estratégia de pooling temporal funciona melhor na GRU (Last State, Mean, Max, Mean+Max)?
-- **RQ3**: GRU e LSTM diferem quando ambas possuem 32 unidades ocultas?
+- **RQ2**: Qual pooling temporal funciona melhor na GRU (Last, Mean, Max, Mean+Max)?
+- **RQ3**: GRU e LSTM diferem com 32 unidades ocultas?
 - **RQ4**: Aumentar a capacidade de 32 para 64 unidades traz ganho consistente?
-- **RQ5**: A diferença entre GRU e LSTM se mantém com o aumento de capacidade?
-- **RQ6**: O possível ganho justifica o aumento de parâmetros e custo computacional?
+- **RQ5**: A diferença entre GRU e LSTM se mantém com 64 unidades?
+- **RQ6**: O possível ganho justifica o aumento de parâmetros e de custo computacional?
 
 ---
 
-## 2. Instalação e Ambiente
+## 2. Correções desta versão (resumo)
 
-### Pré-requisitos
-- Python >= 3.11
-- Suporte a Windows (PowerShell) e Linux/macOS
-- CPU (padrão) ou GPU com CUDA (detectado automaticamente)
+| # | Problema encontrado | Correção |
+|---|---|---|
+| 1 | O split treino-validação era por **índice**: séries **idênticas** (mesmo hash) podiam cair em treino e validação (24 hashes compartilhados, 275 pares, 65 deles com rótulos diferentes). | Split **agrupado por hash** (`StratifiedGroupKFold`), com zero hashes compartilhados e verificação fail-fast (`SplitIntegrityError`). |
+| 2 | Não havia auditoria de duplicatas. | `audit-duplicates` (treino, validação, teste, cruzamentos e desenvolvimento × teste). |
+| 3 | Os tempos eram consolidados como `0.0` quando o campo estava ausente. | Campos obrigatórios; ausência ou tipo inválido interrompe a consolidação com `IncompleteRunError` identificando a execução. `0.0` legítimo é aceito. |
+| 4 | O modelo final não registrava seed, checkpoint, SHA-256, época nem hashes. | Esquema de proveniência completo em `final_model_selection.json` e `final_test_metrics.json`. |
+| 5 | O nó `data_validation` apenas repetia o carregador. | Removido do DAG; as verificações fazem parte do carregamento. |
+| 6 | Resultados antigos não eram invalidados por mudança de split. | O `split_hash` é gravado em cada execução; resultados sem o hash atual são marcados como obsoletos. |
+| 7 | `--fail-fast` conflitava sempre com `--continue-on-error`; `clean-artifacts` dependia do diretório atual. | Flags corrigidas; limpeza segura com `--generated-only`. |
+| 8 | Qualidade: bateria de testes incompleta, cobertura de 60 %. | Suíte ampliada (cobertura medida ≥ 70 %), Ruff, Black e mypy limpos. |
 
-### Instalação no PowerShell (Windows)
+Detalhes e evidências: `artifacts/corrections/`.
+
+---
+
+## 3. Instalação
+
 ```powershell
-# 1. Criação e ativação do ambiente virtual
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-# 2. Instalação em modo editável com dependências de desenvolvimento
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
+Requisitos: Python ≥ 3.11, CPU (padrão) ou CUDA. Veja [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md).
+
 ---
 
-## 3. Estrutura do Repositório
+## 4. Estrutura do Repositório
 
 ```text
 project4_rnn/
-├── README.md                          # Portal central da documentação
-├── pyproject.toml                     # Metadados e configurações das ferramentas
-├── requirements.txt                   # Dependências do projeto
-├── LICENSE                            # Licença MIT
-├── Makefile                           # Atalhos de execução
-├── configs/                           # Configurações declarativas em YAML
-│   ├── base.yaml                      # Configurações globais e de treino
-│   ├── phase_1/mlp_32.yaml            # E01 - Baseline MLP-32
-│   ├── phase_2/                       # E02-E05 - Ablação de Pooling na GRU-32
-│   ├── phase_3/                       # E06 - LSTM-32 com Melhor Pooling
-│   └── phase_4/                       # E07/E08 - GRU-64 e LSTM-64
+├── README.md, pyproject.toml, Makefile, requirements.txt
+├── configs/            # base.yaml e configs por fase (phase_1 … phase_4)
 ├── data/
-│   ├── raw/                           # Dados brutos baixados e manifestos
-│   ├── processed/                     # Partições processadas e split fixo
-│   └── README.md                      # Governança de dados
-├── docs/                              # 20 documentos científicos detalhados
-├── artifacts/                         # Checkpoints, métricas, figuras e auditoria
-├── scripts/                           # Scripts de automação em PowerShell
-├── src/project4_rnn/                  # Código-fonte modular de produção
-│   ├── cli.py                         # Interface de linha de comando
-│   ├── config.py                      # Gestão de configurações e validação
-│   ├── constants.py                   # Constantes e contagens analíticas
-│   ├── logging_config.py              # Configuração de logs
-│   ├── reproducibility.py             # Sementes e metadados de hardware
-│   ├── data/                          # Download, loader, split e dataset
-│   ├── models/                        # MLP, GRU, LSTM, pooling e fábrica
-│   ├── training/                      # Trainer, early stopping e checkpoints
-│   ├── evaluation/                    # Métricas, predições e gráficos
-│   ├── experiments/                   # Runner de sementes e consolidação
-│   ├── orchestration/                 # DAG, plano, reentrância e pipeline
-│   └── audit/                         # Auditoria de conformidade científica
-└── tests/                             # Suíte de testes automatizados
-    ├── unit/                          # Testes unitários
-    ├── integration/                   # Testes de integração
-    └── smoke/                         # Teste rápido de fumaça
+│   ├── raw/            # arquivos oficiais (não versionados)
+│   └── processed/      # dataset_manifest.json e split_indices.json (gerados)
+├── docs/               # 20 documentos
+├── artifacts/
+│   ├── corrections/    # relatórios de correção (versionados)
+│   ├── quality/        # smoke_test_report.txt, quality_results.json (versionados)
+│   └── audits, runs, summary, pipeline_runs   # gerados, não versionados
+├── scripts/            # atalhos PowerShell
+├── src/project4_rnn/
+│   ├── cli.py, config.py, constants.py, reproducibility.py
+│   ├── data/           # loader, hashing, splitting, validation, bundle, synthetic
+│   ├── models/         # MLP, GRU, LSTM, pooling, fábrica
+│   ├── training/       # trainer, early stopping, checkpoints
+│   ├── evaluation/     # métricas, predições, gráficos, final_evaluation (sensibilidade)
+│   ├── experiments/    # runner, timing, provenance, consolidação, seleções
+│   ├── orchestration/  # DAG, plano/dry-run, pipeline, invalidação, retomada
+│   └── audit/          # duplicates, compliance, readiness, smoke, quality, artifacts
+└── tests/              # unit, integration, smoke
 ```
 
 ---
 
-## 4. Guia de Execução nos Três Níveis
+## 5. Split agrupado por hash (resumo)
 
-### Nível 1: Comandos Individuais
+- Hash de cada série: **SHA-256** dos 96 valores em **float64 little-endian**, array contíguo, sem arredondamento, **sem rótulo e sem índice**.
+- Todas as ocorrências de um mesmo hash ficam em **uma única partição**.
+- `StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)`; o fold é escolhido por uma pontuação objetiva que usa somente tamanho, distribuição de classes e integridade (nunca desempenho de modelo).
+- Resultado gerado nesta versão (somente preparação de dados, sem treino): fold 2; treino 7.141 e validação 1.785 (19,998 %); sete classes em ambas; **0 hashes compartilhados**.
+- Grupos com rótulos conflitantes (mesma série, rótulos oficiais diferentes) são mantidos inteiros; rótulos **não** são alterados.
+- Duplicatas internas **não** são removidas; o teste oficial **não** é modificado.
 
-- **Preparar e Baixar Dados**:
-  ```bash
-  python -m project4_rnn.cli prepare-data --config configs/base.yaml
-  ```
-- **Validar Partições e Integridade**:
-  ```bash
-  python -m project4_rnn.cli validate-data --config configs/base.yaml
-  ```
-- **Executar Experimento Individual (1 Semente ou Todas)**:
-  ```bash
-  python -m project4_rnn.cli run-experiment --config configs/phase_1/mlp_32.yaml --seed 42
-  python -m project4_rnn.cli run-experiment --config configs/phase_1/mlp_32.yaml --all-seeds
-  ```
-- **Consolidar Resultados e Gerar Ranking**:
-  ```bash
-  python -m project4_rnn.cli consolidate-results --artifacts-dir artifacts
-  ```
-- **Selecionar Pooling Vencedor da Fase 2**:
-  ```bash
-  python -m project4_rnn.cli select-pooling --summary artifacts/summary/pooling_ablation.csv
-  ```
-- **Selecionar Modelo Final e Avaliar no Teste Oficial**:
-  ```bash
-  python -m project4_rnn.cli select-final-model --summary artifacts/summary/experiments_summary.csv
-  python -m project4_rnn.cli evaluate-final-model --selection artifacts/summary/final_model_selection.json
-  ```
-- **Gerar Catálogo de Evidências e Gráficos**:
-  ```bash
-  python -m project4_rnn.cli generate-evidence --artifacts-dir artifacts
-  ```
-- **Executar Auditoria de Conformidade**:
-  ```bash
-  python -m project4_rnn.cli audit --artifacts-dir artifacts
-  ```
-- **Executar Smoke Test Rápido (<10s)**:
-  ```bash
-  python -m project4_rnn.cli smoke-test
-  ```
+Ver [`docs/DATA_GOVERNANCE.md`](docs/DATA_GOVERNANCE.md) e [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 
-### Nível 2: Execução por Fase
+---
+
+## 6. Comandos
+
+### Dados e auditorias (permitidos a qualquer momento; não treinam)
 
 ```powershell
+python -m project4_rnn.cli prepare-data --config configs/base.yaml
+python -m project4_rnn.cli validate-data --config configs/base.yaml
+python -m project4_rnn.cli audit-duplicates --config configs/base.yaml
+python -m project4_rnn.cli audit-readiness --config configs/base.yaml
+python -m project4_rnn.cli smoke-test
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --dry-run
+```
+
+### Execução experimental (pesada; ver seção 8)
+
+```powershell
+python -m project4_rnn.cli run-experiment --config configs/phase_1/mlp_32.yaml --seed 42
 python -m project4_rnn.cli run-phase --phase 1 --config configs/base.yaml
-python -m project4_rnn.cli run-phase --phase 2 --config configs/base.yaml
-python -m project4_rnn.cli run-phase --phase 3 --config configs/base.yaml
-python -m project4_rnn.cli run-phase --phase 4 --config configs/base.yaml
-python -m project4_rnn.cli run-final-evaluation --config configs/base.yaml
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --fail-fast
 ```
 
-### Nível 3: Pipeline Completo (Comando Mestre)
-
-Executa integralmente o estudo de ponta a ponta (40 treinamentos, consolidações, seleção do campeão, avaliação no teste oficial, catálogo de evidências e relatório de auditoria):
-
-```powershell
-python -m project4_rnn.cli run-full-experiment --config configs/base.yaml
-```
-
-#### Opções do Orquestrador:
-- `--dry-run`: Exibe o plano de execução e dependências sem rodar treinamentos.
-- `--resume`: Reutiliza etapas já concluídas e válidas, executando apenas o que estiver pendente.
-- `--force`: Refaz todas as etapas.
-- `--from-phase <1-4>` e `--until-phase <1-4>`: Delimita o intervalo de fases a executar.
-- `--fail-fast`: Interrompe a execução na primeira falha.
-- `--continue-on-error`: Continua etapas independentes se houver erro.
+Demais comandos (`consolidate-results`, `select-pooling`, `select-final-model`, `evaluate-final-model`, `evaluate-sensitivity`, `generate-evidence`, `audit`, `clean-artifacts`): [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md).
 
 ---
 
-## 5. Qualidade de Código e Testes Automatizados
-
-O projeto adota conformidade rigorosa com **PEP 8**, tipagem estática com **mypy**, formatação determinística com **black** e análise estática com **ruff**.
+## 7. Qualidade de Código
 
 ```powershell
-# Execução dos testes automatizados com cobertura
-python -m pytest tests -v --cov=project4_rnn --cov-report=term-missing
-
-# Verificação de qualidade do código
-python -m ruff check src tests configs
-python -m black --check src tests
+python -m ruff check .
+python -m black --check .
 python -m mypy src
+python -m pytest
+python -m pytest --cov=src/project4_rnn --cov-report=term-missing --cov-report=xml
+python -m pre_commit run --all-files
 ```
 
----
-
-## 6. Matriz de Rastreabilidade Científica
-
-| Funcionalidade | Módulo Implementado | Comando CLI | Arquivo de Configuração | Teste Automatizado | Documentação | Evidência / Artefato Gerado |
-|---|---|---|---|---|---|---|
-| **Binarização de Rótulos** | `data/preprocessing.py` | `prepare-data` | `configs/base.yaml` | `tests/unit/test_data_processing.py` | [`docs/DATASET.md`](docs/DATASET.md) | `data/processed/dataset_manifest.json` |
-| **Split Estratificado Fixo** | `data/splitting.py` | `prepare-data` | `configs/base.yaml` | `tests/unit/test_data_processing.py` | [`docs/DATA_GOVERNANCE.md`](docs/DATA_GOVERNANCE.md) | `data/processed/split_indices.json` |
-| **Arquitetura MLP-32** | `models/mlp.py` | `run-experiment` | `configs/phase_1/mlp_32.yaml` | `tests/unit/test_models_and_params.py` | [`docs/MODEL_ARCHITECTURES.md`](docs/MODEL_ARCHITECTURES.md) | `artifacts/runs/E01_MLP_32/` |
-| **Ablação de Pooling** | `models/pooling.py` | `run-phase --phase 2` | `configs/phase_2/*.yaml` | `tests/unit/test_models_and_params.py` | [`docs/POOLING_ABLATION.md`](docs/POOLING_ABLATION.md) | `artifacts/summary/pooling_ablation.csv` |
-| **Seleção Automática de Pooling** | `experiments/pooling_selection.py` | `select-pooling` | `configs/base.yaml` | `tests/unit/test_selection_and_orchestration.py` | [`docs/POOLING_ABLATION.md`](docs/POOLING_ABLATION.md) | `artifacts/summary/pooling_selection.json` |
-| **Modelos GRU e LSTM** | `models/recurrent.py` | `run-phase --phase 3/4` | `configs/phase_3/`, `phase_4/` | `tests/unit/test_models_and_params.py` | [`docs/MODEL_ARCHITECTURES.md`](docs/MODEL_ARCHITECTURES.md) | `artifacts/runs/E06_LSTM_32_BEST_POOLING/` |
-| **Early Stopping e Checkpoints** | `training/trainer.py` | `run-experiment` | `configs/base.yaml` | `tests/unit/test_training_and_metrics.py` | [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) | `best_checkpoint.pt`, `training_history.csv` |
-| **Cálculo de Métricas** | `evaluation/metrics.py` | `run-experiment` | `configs/base.yaml` | `tests/unit/test_training_and_metrics.py` | [`docs/RESULTS_GUIDE.md`](docs/RESULTS_GUIDE.md) | `validation_metrics.json` |
-| **Consolidação de Resultados** | `experiments/consolidation.py` | `consolidate-results` | `configs/base.yaml` | `tests/integration/test_pipeline_integration.py` | [`docs/ARTIFACTS_AND_EVIDENCE.md`](docs/ARTIFACTS_AND_EVIDENCE.md) | `artifacts/summary/experiments_summary.csv` |
-| **Seleção do Modelo Final** | `experiments/model_selection.py` | `select-final-model` | `configs/base.yaml` | `tests/unit/test_selection_and_orchestration.py` | [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) | `artifacts/summary/final_model_selection.json` |
-| **Avaliação no Teste Oficial** | `orchestration/phase_runner.py` | `evaluate-final-model` | `configs/base.yaml` | `tests/integration/test_pipeline_integration.py` | [`docs/DATASET.md`](docs/DATASET.md) | `artifacts/summary/final_test_metrics.json` |
-| **Orquestrador de Pipeline (DAG)** | `orchestration/pipeline.py` | `run-full-experiment` | `configs/base.yaml` | `tests/unit/test_selection_and_orchestration.py` | [`docs/PIPELINE_ORCHESTRATION.md`](docs/PIPELINE_ORCHESTRATION.md) | `artifacts/pipeline_runs/` |
-| **Auditoria de Conformidade** | `audit/compliance.py` | `audit` | `configs/base.yaml` | `tests/integration/test_pipeline_integration.py` | [`docs/ARTIFACTS_AND_EVIDENCE.md`](docs/ARTIFACTS_AND_EVIDENCE.md) | `artifacts/audits/final_compliance_audit.md` |
+Estratégia de testes: [`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md).
 
 ---
 
-## 7. Índice da Documentação Detalhada
+## 8. PRÓXIMA EXECUÇÃO EXPERIMENTAL
 
-- [`docs/PROJECT_SCOPE.md`](docs/PROJECT_SCOPE.md): Escopo e objetivos da pesquisa.
-- [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md): Requisitos de software e hardware.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): Arquitetura do software e diagramas de componentes.
-- [`docs/DATASET.md`](docs/DATASET.md): Detalhamento do dataset ElectricDevices e mapeamento de 7 classes.
-- [`docs/DATA_GOVERNANCE.md`](docs/DATA_GOVERNANCE.md): Governança de dados e integridade.
-- [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md): Metodologia científica e tratamento de hipóteses.
-- [`docs/EXPERIMENTAL_PROTOCOL.md`](docs/EXPERIMENTAL_PROTOCOL.md): Protocolo experimental e matriz de comparações.
-- [`docs/MODEL_ARCHITECTURES.md`](docs/MODEL_ARCHITECTURES.md): Detalhamento matemático das redes e contagem de parâmetros.
-- [`docs/POOLING_ABLATION.md`](docs/POOLING_ABLATION.md): Estudo de ablação das estratégias de pooling.
-- [`docs/PIPELINE_ORCHESTRATION.md`](docs/PIPELINE_ORCHESTRATION.md): Grafo de dependências (DAG), reentrância e proveniência.
-- [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md): Manual completo de todos os comandos CLI.
-- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md): Guia de arquivos declarativos YAML.
-- [`docs/EXECUTION_GUIDE.md`](docs/EXECUTION_GUIDE.md): Passo a passo para execução no Windows/Linux.
-- [`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md): Estrutura da suíte de testes.
-- [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md): Protocolo de reprodutibilidade e controle de sementes.
-- [`docs/ARTIFACTS_AND_EVIDENCE.md`](docs/ARTIFACTS_AND_EVIDENCE.md): Dicionário de artefatos gerados.
-- [`docs/RESULTS_GUIDE.md`](docs/RESULTS_GUIDE.md): Guia para interpretação dos resultados científicos.
-- [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md): Limitações científicas obrigatórias.
-- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md): Soluções para problemas comuns.
-- [`docs/SCIENTIFIC_ARTICLE_GUIDE.md`](docs/SCIENTIFIC_ARTICLE_GUIDE.md): Mapeamento de resultados para escrita de artigo científico.
+> Os comandos abaixo são **para execução posterior pelo usuário**. **Não foram executados** na etapa de desenvolvimento e correção.
+
+1. Limpar os resultados gerados que são incompatíveis com o novo split (preserva `artifacts/corrections` e `artifacts/quality`):
+
+```powershell
+python -m project4_rnn.cli clean-artifacts --generated-only
+```
+
+2. Executar o experimento completo (8 configurações × 5 sementes = 40 treinamentos, seleção, avaliação única no teste oficial e análises de sensibilidade):
+
+```powershell
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --fail-fast
+```
+
+3. Em caso de interrupção:
+
+```powershell
+python -m project4_rnn.cli run-full-experiment --config configs/base.yaml --resume --fail-fast
+```
+
+Pré-visualização sem executar nada: acrescente `--dry-run`. Guia completo: [`docs/EXECUTION_GUIDE.md`](docs/EXECUTION_GUIDE.md).
 
 ---
 
-## 8. Limitações Científicas
+## 9. Rastreabilidade
 
-1. Os resultados referem-se ao benchmark oficial ElectricDevices do UCR/UEA Archive (16.637 séries temporais, 7 classes, L=96).
-2. O conjunto de validação é de ~1.785 amostras (20% do treino oficial de 8.926 amostras).
-3. As 5 sementes medem estabilidade do processo de otimização sobre a mesma partição fixa (seed 42).
-4. O conjunto oficial de teste (7.711 amostras) foi reservado exclusivamente para a avaliação final do modelo campeão selecionado por validação e parcimônia.
+| Funcionalidade | Módulo | Comando | Teste | Documentação | Artefato |
+|---|---|---|---|---|---|
+| Hash de séries | `data/hashing.py` | – | `test_hashing.py` | [`DATA_GOVERNANCE`](docs/DATA_GOVERNANCE.md) | `split_indices.json` |
+| Split agrupado | `data/splitting.py` | `prepare-data` | `test_splitting.py` | [`METHODOLOGY`](docs/METHODOLOGY.md) | `data/processed/split_indices.json` |
+| Contrato do dataset | `data/loader.py`, `data/validation.py` | `validate-data` | `test_loader_contract.py` | [`DATASET`](docs/DATASET.md) | `dataset_manifest.json` |
+| Auditoria de duplicatas | `audit/duplicates.py` | `audit-duplicates` | `test_duplicates_audit.py` | [`DATA_GOVERNANCE`](docs/DATA_GOVERNANCE.md) | `artifacts/audits/duplicate_*` |
+| Tempos | `experiments/timing.py` | `consolidate-results` | `test_timing_consolidation.py` | [`ARTIFACTS_AND_EVIDENCE`](docs/ARTIFACTS_AND_EVIDENCE.md) | `consolidation_status.json` |
+| Proveniência | `experiments/provenance.py` | `select-final-model` | `test_provenance.py` | [`REPRODUCIBILITY`](docs/REPRODUCIBILITY.md) | `final_model_selection.json` |
+| Sensibilidade | `evaluation/final_evaluation.py` | `evaluate-sensitivity` | `test_sensitivity.py` | [`RESULTS_GUIDE`](docs/RESULTS_GUIDE.md) | `final_test_metrics_*` |
+| Orquestração / dry-run | `orchestration/` | `run-full-experiment` | `test_cli_and_dry_run.py`, `test_pipeline_orchestration.py` | [`PIPELINE_ORCHESTRATION`](docs/PIPELINE_ORCHESTRATION.md) | `artifacts/pipeline_runs/` |
+| Limpeza segura | `audit/artifacts.py` | `clean-artifacts` | `test_artifact_management.py` | [`TROUBLESHOOTING`](docs/TROUBLESHOOTING.md) | – |
+| Prontidão técnica | `audit/readiness.py` | `audit-readiness` | `test_readiness_and_quality.py` | [`TESTING_STRATEGY`](docs/TESTING_STRATEGY.md) | `artifacts/audits/readiness_audit.*` |
+| Smoke test reduzido | `audit/smoke.py` | `smoke-test` | `tests/smoke/test_smoke.py` | [`TESTING_STRATEGY`](docs/TESTING_STRATEGY.md) | `artifacts/quality/smoke_test_report.txt` |
+
+---
+
+## 10. Índice da Documentação
+
+[`PROJECT_SCOPE`](docs/PROJECT_SCOPE.md) · [`REQUIREMENTS`](docs/REQUIREMENTS.md) · [`ARCHITECTURE`](docs/ARCHITECTURE.md) · [`DATASET`](docs/DATASET.md) · [`DATA_GOVERNANCE`](docs/DATA_GOVERNANCE.md) · [`METHODOLOGY`](docs/METHODOLOGY.md) · [`EXPERIMENTAL_PROTOCOL`](docs/EXPERIMENTAL_PROTOCOL.md) · [`MODEL_ARCHITECTURES`](docs/MODEL_ARCHITECTURES.md) · [`POOLING_ABLATION`](docs/POOLING_ABLATION.md) · [`PIPELINE_ORCHESTRATION`](docs/PIPELINE_ORCHESTRATION.md) · [`COMMAND_REFERENCE`](docs/COMMAND_REFERENCE.md) · [`CONFIGURATION`](docs/CONFIGURATION.md) · [`EXECUTION_GUIDE`](docs/EXECUTION_GUIDE.md) · [`TESTING_STRATEGY`](docs/TESTING_STRATEGY.md) · [`REPRODUCIBILITY`](docs/REPRODUCIBILITY.md) · [`ARTIFACTS_AND_EVIDENCE`](docs/ARTIFACTS_AND_EVIDENCE.md) · [`RESULTS_GUIDE`](docs/RESULTS_GUIDE.md) · [`LIMITATIONS`](docs/LIMITATIONS.md) · [`TROUBLESHOOTING`](docs/TROUBLESHOOTING.md) · [`SCIENTIFIC_ARTICLE_GUIDE`](docs/SCIENTIFIC_ARTICLE_GUIDE.md)
+
+---
+
+## 11. Limitações Principais
+
+1. Benchmark oficial ElectricDevices (16.637 séries, 7 classes, L = 96).
+2. Duplicatas **internas** permanecem em treino, validação e teste (decisão documentada, sem ponderação por grupo).
+3. Há 54 grupos de séries idênticas com rótulos oficiais conflitantes no conjunto total; eles não podem ser separados usando somente os 96 valores.
+4. 57 grupos de hash do desenvolvimento aparecem também no teste oficial (208 amostras de teste); por isso são previstas análises de sensibilidade descritivas.
+5. As cinco sementes medem estabilidade de otimização sobre uma mesma partição fixa, não variabilidade amostral.
+
+Ver [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).

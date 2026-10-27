@@ -127,7 +127,7 @@ class PipelineManifest:
             f"- **Status Final**: **{self.status}**",
             f"- **Início**: {status_payload.get('start_time')}",
             f"- **Término**: {status_payload.get('end_time')}",
-            f"- **Duração Total**: {status_payload.get('total_duration_sec', 0.0):.2f} segundos",
+            f"- **Duração Total**: {status_payload['total_duration_sec']:.2f} segundos",
             f"- **Etapas Concluídas**: {len(self.completed_steps)}",
             f"- **Etapas com Falhas**: {len(self.failed_steps)}",
             "",
@@ -144,19 +144,19 @@ class PipelineManifest:
                 lines.append(f"- **{fail_item['step_id']}**: {fail_item['error']}")
 
         if final_test_metrics is not None:
-            lines.extend(
-                [
-                    "",
-                    "## 4. Desempenho no Teste Oficial (7.711 amostras)",
-                    "",
-                    f"- **Macro F1**: {final_test_metrics.get('macro_f1', final_test_metrics.get('f1', 0.0)):.4f}",
-                    f"- **Balanced Accuracy**: {final_test_metrics.get('balanced_accuracy', 0.0):.4f}",
-                    f"- **Accuracy**: {final_test_metrics.get('accuracy', 0.0):.4f}",
-                    f"- **Macro Precision**: {final_test_metrics.get('macro_precision', final_test_metrics.get('precision', 0.0)):.4f}",
-                    f"- **Macro Recall**: {final_test_metrics.get('macro_recall', final_test_metrics.get('recall', 0.0)):.4f}",
-                    f"- **Loss**: {final_test_metrics.get('loss', 0.0):.4f}",
-                ]
+            lines.extend(["", "## 4. Desempenho no Teste Oficial", ""])
+            labels = (
+                ("macro_f1", "Macro F1"),
+                ("balanced_accuracy", "Balanced Accuracy"),
+                ("accuracy", "Accuracy"),
+                ("macro_precision", "Macro Precision"),
+                ("macro_recall", "Macro Recall"),
+                ("loss", "Loss"),
             )
+            for key, label in labels:
+                if key not in final_test_metrics:
+                    raise KeyError(f"final test metrics lack required field '{key}'")
+                lines.append(f"- **{label}**: {float(final_test_metrics[key]):.4f}")
 
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))

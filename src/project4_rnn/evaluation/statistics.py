@@ -6,7 +6,41 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from project4_rnn.experiments.timing import (
+    TIMING_FIELDS,
+    IncompleteRunError,
+    RunProblem,
+    find_numeric_problems,
+    find_timing_problems,
+)
+
 logger = logging.getLogger("project4_rnn.evaluation.statistics")
+
+REQUIRED_RUN_FIELDS: tuple[str, ...] = (
+    "phase",
+    "seed",
+    "best_epoch",
+    "total_epochs",
+    "total_parameters",
+    "trainable_parameters",
+    "best_val_loss",
+)
+
+REQUIRED_VALIDATION_METRICS: tuple[str, ...] = ("macro_f1", "balanced_accuracy", "loss")
+
+
+def find_run_problems(run: dict[str, Any], run_id: str) -> list[RunProblem]:
+    """All defects of a run summary that would corrupt aggregation (never defaulted to zero)."""
+    problems = find_numeric_problems(run, run_id, REQUIRED_RUN_FIELDS)
+    problems.extend(find_timing_problems(run, run_id))
+    metrics = run.get("validation_metrics")
+    if not isinstance(metrics, dict):
+        problems.append(RunProblem(run_id, "validation_metrics", "is missing or not a mapping"))
+    else:
+        problems.extend(
+            find_numeric_problems(metrics, run_id, REQUIRED_VALIDATION_METRICS, allow_negative=True)
+        )
+    return problems
 
 
 def summarize_seed_runs(
@@ -23,6 +57,10 @@ def summarize_seed_runs(
 
     Returns:
         Consolidated summary dictionary with mean, std, min, max per metric.
+
+    Raises:
+        IncompleteRunError: If any run lacks a required field or has an invalid value. Missing
+            values are never replaced by zero.
     """
     if not runs:
         return {
@@ -32,6 +70,13 @@ def summarize_seed_runs(
             "failed_runs": 0,
         }
 
+    problems: list[RunProblem] = []
+    for r in runs:
+        run_id = f"{experiment_id}/seed_{r.get('seed', '?')}"
+        problems.extend(find_run_problems(r, run_id))
+    if problems:
+        raise IncompleteRunError(problems)
+
     completed_runs = len(runs)
 
     # Flatten metric dictionaries
@@ -40,17 +85,15 @@ def summarize_seed_runs(
         row: dict[str, float] = {
             "seed": float(r["seed"]),
             "best_epoch": float(r["best_epoch"]),
-            "total_epochs": float(r.get("total_epochs", 0)),
-            "total_training_time_sec": float(r.get("total_training_time_sec", 0.0)),
-            "mean_epoch_time_sec": float(r.get("mean_epoch_time_sec", 0.0)),
-            "inference_time_sec": float(r.get("inference_time_sec", 0.0)),
-            "total_parameters": float(r.get("total_parameters", 0)),
-            "trainable_parameters": float(r.get("trainable_parameters", 0)),
-            "best_val_loss": float(r.get("best_val_loss", 0.0)),
+            "total_epochs": float(r["total_epochs"]),
+            "total_parameters": float(r["total_parameters"]),
+            "trainable_parameters": float(r["trainable_parameters"]),
+            "best_val_loss": float(r["best_val_loss"]),
         }
-        val_m = r.get("validation_metrics", {})
-        for k, v in val_m.items():
-            if isinstance(v, (int, float)) and v is not None:
+        for name in TIMING_FIELDS:
+            row[name] = float(r[name])
+        for k, v in r["validation_metrics"].items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
                 row[f"val_{k}"] = float(v)
         flat_records.append(row)
 

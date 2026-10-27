@@ -17,12 +17,13 @@ def test_single_seed_run_artifacts_creation(
 ) -> None:
     """Verify that executing a single seed generates all required artifact files."""
     X_dev, y_dev_orig = synthetic_dev_data
+    X_dev = X_dev.astype(np.float32)
 
     y_dev_mapped = map_official_to_internal_labels(y_dev_orig)
-    X_train = X_dev[:100]
-    y_train = y_dev_mapped[:100]
-    X_val = X_dev[100:140]
-    y_val = y_dev_mapped[100:140]
+    X_train = X_dev[:160]
+    y_train = y_dev_mapped[:160]
+    X_val = X_dev[160:200]
+    y_val = y_dev_mapped[160:200]
 
     cfg = build_experiment_config(
         base_config_path=Path("configs/base.yaml"),
@@ -38,7 +39,9 @@ def test_single_seed_run_artifacts_creation(
         y_train=y_train,
         X_val=X_val,
         y_val=y_val,
-        val_indices=np.arange(100, 140),
+        val_indices=np.arange(160, 200),
+        dataset_hash="dataset-hash",
+        split_hash="split-hash",
         artifacts_dir=temp_artifacts_dir,
         force=True,
     )
@@ -65,6 +68,12 @@ def test_single_seed_run_artifacts_creation(
     # Re-running with force=False should trigger SKIP
     from project4_rnn.experiments.runner import check_run_status
 
-    status_code, existing = check_run_status(run_dir, cfg.compute_hash())
+    status_code, existing = check_run_status(
+        run_dir, cfg.compute_hash(), "split-hash", "dataset-hash"
+    )
     assert status_code == "SKIP"
     assert existing is not None
+
+    # A run trained on another split is never reused.
+    other_status, _ = check_run_status(run_dir, cfg.compute_hash(), "other-split", "dataset-hash")
+    assert other_status == "RERUN"

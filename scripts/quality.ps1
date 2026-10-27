@@ -2,11 +2,11 @@
 Write-Host "Running code quality checks (Ruff, Black, Mypy)..."
 
 Write-Host "1. Ruff..."
-python -m ruff check src tests configs
+python -m ruff check .
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "2. Black format check..."
-python -m black --check src tests
+python -m black --check .
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "3. Mypy type check..."

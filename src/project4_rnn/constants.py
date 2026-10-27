@@ -45,6 +45,19 @@ INTERNAL_TO_OFFICIAL_LABEL: Final[dict[int, int]] = {
 # Training/Validation split specification on official train partition (approx 80% / 20%)
 SPLIT_SEED: Final[int] = 42
 VAL_SPLIT_RATIO: Final[float] = 0.20
+SPLIT_N_SPLITS: Final[int] = 5
+SPLIT_METHOD: Final[str] = "stratified_group_kfold_by_series_hash"
+SPLIT_METHOD_VERSION: Final[str] = "2.0.0"
+SPLIT_SELECTION_CRITERION: Final[str] = (
+    "minimum aggregate score = |val_fraction - target| + L1(val class proportions - official) "
+    "+ L1(train class proportions - official); folds with shared hashes or missing classes are "
+    "ineligible; ties resolved by lowest fold index; model performance is never used"
+)
+
+# Series fingerprint specification (hash over the raw 96 values, before any normalization)
+SERIES_HASH_ALGORITHM: Final[str] = "sha256"
+SERIES_HASH_DTYPE: Final[str] = "float64"
+SERIES_HASH_ENDIANNESS: Final[str] = "little"
 
 # Training seeds (5 seeds x 8 configs = 40 training runs)
 TRAIN_SEEDS: Final[list[int]] = [7, 21, 42, 84, 168]
@@ -98,3 +111,16 @@ PHASE_2_CANDIDATES: Final[list[str]] = [
     "E04_GRU_32_MAX",
     "E05_GRU_32_MEAN_MAX",
 ]
+
+SENSITIVITY_ARTIFACT_NAMES: Final[tuple[str, ...]] = (
+    "final_test_metrics_no_exact_overlap.json",
+    "final_test_metrics_by_class_no_exact_overlap.csv",
+    "final_test_predictions_no_exact_overlap.csv",
+    "final_test_probabilities_no_exact_overlap.csv",
+    "final_test_metrics_without_label_conflicts.json",
+    "final_test_metrics_by_class_without_label_conflicts.csv",
+    "final_test_predictions_without_label_conflicts.csv",
+    "final_test_probabilities_without_label_conflicts.csv",
+    "final_evaluation_sensitivity_comparison.csv",
+    "final_evaluation_sensitivity_comparison.md",
+)

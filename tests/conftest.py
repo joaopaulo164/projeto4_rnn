@@ -6,30 +6,36 @@ import numpy as np
 import pytest
 
 from project4_rnn.config import ExperimentConfig, build_experiment_config
-from project4_rnn.constants import (
-    OFFICIAL_CLASSES,
-    SEQUENCE_LENGTH,
-)
+from project4_rnn.data.hashing import hash_series_matrix
+from project4_rnn.data.synthetic import make_synthetic_series, make_synthetic_test_series
+from project4_rnn.reproducibility import set_seed
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_seed() -> None:
+    """Lock every random number generator before each test."""
+    set_seed(42, deterministic=True)
 
 
 @pytest.fixture
 def synthetic_dev_data() -> tuple[np.ndarray, np.ndarray]:
-    """Generate reproducible synthetic development data (100 samples, 96 length, 7 classes)."""
-    np.random.seed(42)
-    n_samples = 140
-    X = np.random.randn(n_samples, SEQUENCE_LENGTH).astype(np.float32)
-    y_orig = np.random.choice(list(OFFICIAL_CLASSES), size=n_samples)
-    return X, y_orig
+    """Synthetic development series (float64) with official labels 1..7 and duplicate groups."""
+    return make_synthetic_series()
 
 
 @pytest.fixture
-def synthetic_test_data() -> tuple[np.ndarray, np.ndarray]:
-    """Generate reproducible synthetic test data (70 samples, 96 length, 7 classes)."""
-    np.random.seed(42)
-    n_samples = 70
-    X = np.random.randn(n_samples, SEQUENCE_LENGTH).astype(np.float32)
-    y_orig = np.random.choice(list(OFFICIAL_CLASSES), size=n_samples)
-    return X, y_orig
+def synthetic_test_data(
+    synthetic_dev_data: tuple[np.ndarray, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Synthetic test series partially coinciding with the synthetic development series."""
+    X_dev, y_dev = synthetic_dev_data
+    return make_synthetic_test_series(X_dev, y_dev)
+
+
+@pytest.fixture
+def synthetic_dev_hashes(synthetic_dev_data: tuple[np.ndarray, np.ndarray]) -> list[str]:
+    """Series hashes of the synthetic development data."""
+    return hash_series_matrix(synthetic_dev_data[0])
 
 
 @pytest.fixture

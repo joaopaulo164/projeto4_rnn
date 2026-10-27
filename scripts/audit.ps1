@@ -1,4 +1,4 @@
-# scripts/audit.ps1 - Compliance and Integrity Audit
+# scripts/audit.ps1 - Scientific compliance audit (requires a completed experiment)
 param (
     [string]$ArtifactsDir = "artifacts"
 )

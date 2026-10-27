@@ -1,6 +1,9 @@
-"""Experiment runner, registry, selection criteria, and result consolidation."""
+"""Experiment runner, registry and selection criteria.
 
-from project4_rnn.experiments.consolidation import consolidate_experiments
+Result consolidation lives in ``project4_rnn.experiments.consolidation`` and is imported from
+there directly (re-exporting it here would create an import cycle with the evaluation package).
+"""
+
 from project4_rnn.experiments.model_selection import select_final_model
 from project4_rnn.experiments.pooling_selection import (
     load_selected_pooling,
@@ -27,5 +30,4 @@ __all__ = [
     "select_best_pooling",
     "load_selected_pooling",
     "select_final_model",
-    "consolidate_experiments",
 ]
